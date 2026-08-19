@@ -1,6 +1,6 @@
 # 开发线 Git 记录与工作区快照
 
-> **快照时间**：2026-08-19  
+> **快照时间**：2026-08-19（GitHub 同步：`8742ba0` 之后工作区与备份仓文件一致；`_inbox` 草稿已纳入备份）
 > **狗端工作区**：`~/MotionSLAM_ws`（分支 `dev`）  
 > **GitHub 私人备份**：`~/MotionSLAM_ws_github`（分支 `main`）  
 > **用途**：记录 GitLab 集成线 commit 演进、GitHub 备份线状态、以及**尚未进入任何 remote 的工作区改动**。验收事实仍以 [测试记录.md](../测试验收/测试记录.md) 为准。
@@ -142,7 +142,7 @@ GitHub **不含** §2 的 10 步 commit 历史；文件内容大致对齐 `20cec
 | `边侧Qwen2.5-VL接入说明.md` | 边侧 VL 接入 | ✅ 已在 `f74114f` |
 | `私人GitHub备份清单.md` | 备份切分规范 | ✅ 已在 `f74114f` |
 | `docs/架构/assets/架构_三空间.png` | 架构图 | ✅ 已在 `f74114f` |
-| `docs/_inbox/` | 架构图 mermaid 草稿 | ❌ 未进 GitHub |
+| `docs/_inbox/` | 架构图 mermaid 草稿 | ✅ 已纳入 GitHub 备份 |
 | `pct_planner_ws/` | Python PCT 调试 overlay | ❌ 故意不传 |
 
 ### 4.3 物模型增量摘要（未 commit 的核心）

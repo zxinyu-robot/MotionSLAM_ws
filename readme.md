@@ -1,7 +1,8 @@
 # MotionSLAM_ws
 
-> **GitHub 私人备份仓**（脱敏快照）。狗端集成仓仍以 GitLab `origin` 为准；上游 submodule 与 patch 见 [THIRD_PARTY.md](THIRD_PARTY.md)。  
-> 雷达配置：复制 `src/motionslam_bringup/config/MID360_config.example.json` → `MID360_config.json` 后填现场 IP。
+> **GitHub 私人备份仓**（脱敏快照，与狗端 `~/MotionSLAM_ws` 同步）。集成仓仍以 GitLab `origin` 为准；上游见 [THIRD_PARTY.md](THIRD_PARTY.md)。  
+> 雷达配置：复制 `src/motionslam_bringup/config/MID360_config.example.json` → `MID360_config.json` 后填现场 IP。  
+> **Git / 工作区状态**：[开发线Git记录与工作区快照.md](docs/开发参考/开发线Git记录与工作区快照.md)
 
 Go2 自主避障导航自研栈：**Super-LIO + PCT C++ 常驻粗引导 + SCAN 连续局部 + BT 编排 + C++ pipeline**（Sport 转发、lifecycle context），
 运行于 Humble Docker 容器（host 网络 + CycloneDDS 与 Go2 机身 DDS 域 0 原生互通）。
@@ -17,7 +18,7 @@ Go2 自主避障导航自研栈：**Super-LIO + PCT C++ 常驻粗引导 + SCAN �
 | **架构** | 三空间中间件 OS、与智源 RoboOS 对照、分层、部署、控制/数据面、模块边界（目标态，不当进度清单） | [架构_端侧系统架构.md](docs/架构/架构_端侧系统架构.md) |
 | **接口规范** | 边端边界消息与端口契约 | [边端协同接口规范.md](docs/项目规范/边端协同接口规范.md) |
 | **运维 / 测试** | 怎么启停、怎么验、干跑/真机证据 | [Demo阶段3D_runbook.md](docs/运维/Demo阶段3D_runbook.md) · [测试记录.md](docs/测试验收/测试记录.md) |
-| **开发参考** | PCT、DDS、标定、工程附录、边侧 Qwen2.5-VL、私人备份切仓、**Git 线与工作区快照** | [PCT 接入](docs/开发参考/PCT-Planner接入说明.md) · [工程附录](docs/开发参考/工程开发附录.md) · [Qwen2.5-VL](docs/开发参考/边侧Qwen2.5-VL接入说明.md) · [DDS](docs/开发参考/DDS通信性能优化参考.md) · [私人 GitHub 备份清单](docs/开发参考/私人GitHub备份清单.md) · [**开发线 Git 记录**](docs/开发参考/开发线Git记录与工作区快照.md) |
+| **开发参考** | PCT、DDS、标定、工程附录、边侧 Qwen2.5-VL、私人备份、Git 线快照 | [PCT 接入](docs/开发参考/PCT-Planner接入说明.md) · [工程附录](docs/开发参考/工程开发附录.md) · [Qwen2.5-VL](docs/开发参考/边侧Qwen2.5-VL接入说明.md) · [DDS](docs/开发参考/DDS通信性能优化参考.md) · [私人 GitHub 备份清单](docs/开发参考/私人GitHub备份清单.md) · [**Git 线快照**](docs/开发参考/开发线Git记录与工作区快照.md) |
 
 临时草稿只进 [`docs/_inbox/`](docs/_inbox/)（非权威，AI 默认不索引）。
 
