@@ -1,0 +1,8 @@
+=== Step 2 收关验收 ===
+时间: 2026-08-07T09:51:59+00:00  trials=10 min_pass=8 dist=2.0m
+记录: /ws/docs/测试验收/step2_complete_20260807_095159.txt
+等待 LIO 45s...
+
+--- S2-5：10 次 mock 定向 2.0m ---
+  [trial 1/10]
+    PASS

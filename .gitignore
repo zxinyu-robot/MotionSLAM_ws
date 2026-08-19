@@ -1,0 +1,46 @@
+# colcon / catkin 构建产物 (规范: 永远不要版本控制 build/devel)
+build/
+install/
+log/
+devel/
+symlink_install_manifest.txt
+compile_commands.json
+
+# 地图与数据大文件 (规范: 大文件不入库, 存 NX 本地或对象存储)
+*.pcd
+*.bag
+*.mcap
+maps/
+
+# 日志与临时文件
+*.log
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# ego-planner vendor 拷贝 (含 MotionSLAM patch)，暂不入库
+src/ego-planner-swarm/
+
+# 录包、归档与本地数据目录 (规范: 大文件不入库)
+bags/
+*.tar.gz
+*.zip
+
+# 现场调试 session 日志/录包记录 (docs 内 *.md 仍可入库)
+docs/sessions/
+
+# tf2_tools view_frames 等临时导出
+frames_*.gv
+frames_*.pdf
+
+# 编辑器工作区 (非源码)
+*.code-workspace
+
+# export 文件夹
+export/

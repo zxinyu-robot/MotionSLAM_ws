@@ -1,0 +1,11 @@
+PCT 单点 A* 真机 2026-08-13
+goal = odom + 1.2m  (forwarder=false)
+
+ct_planner_node.py-1] [PCT] cloud filter 8377 -> 7552 points
+[pct_planner_node.py-1] [PCT] tomogram cells=166332 elev=10306 valid_ground=10306 thr=100.0 trav_p50=100.0 trav_p90=100.0 slices=6 dim=[166, 167] res=0.075
+[pct_planner_node.py-1] Astar initialized, max_x: 167, max_y: 166, max_layers: 6, time elapsed: 22.683000 ms
+[pct_planner_node.py-1] [INFO] [1786612567.395417510] [pct_planner]: A* query start=(-0.00,0.00,0.00) goal=(1.20,-0.00,0.00)
+[pct_planner_node.py-1] [PCT] snap start [1, 83, 95] -> [1, 92, 100] (xy_r9) elev=-0.03 cost=100.0
+[pct_planner_node.py-1] [PCT] snap goal  [1, 83, 111] -> [1, 84, 114] (xy_r3;same_floor->exact) elev=-0.44 cost=100.0 same_floor=True
+[pct_planner_node.py-1] [A*] Path found: 16 waypoints, 4725 iterations, 351 layer transitions, 34.83ms
+[pct_planner_node.py-1] [INFO] [1786612567.548929751] [pct_planner]: Published path with 19 poses

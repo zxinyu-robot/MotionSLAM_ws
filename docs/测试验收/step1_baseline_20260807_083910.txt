@@ -1,0 +1,10 @@
+记录文件: /ws/docs/测试验收/step1_baseline_20260807_083910.txt
+=== Step 1 Lean 基线验收 ===
+时间: 2026-08-07T08:39:10+00:00
+
+--- S1-1 栈能启动 ---
+[PASS] S1-1 节点 demo_scan_bt_orchestrator 在线
+[PASS] S1-1 节点 cmd_vel_forwarder 在线
+[FAIL] S1-1 节点 scan_replan_fsm 在线
+
+--- S1-4 /cmd_vel 单链（订阅数） ---

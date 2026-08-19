@@ -1,0 +1,73 @@
+# Super-LIO 重定位参数 (mid360, Go2)
+# 与 super_lio_mid360.yaml 共用 odom_robo; 建图产出 /ws/maps/map.pcd
+/**:
+  ros__parameters:
+    lio.map.save_map: false
+    lio.map.if_filter: true
+    lio.map.save_map_dir: "/ws/maps"
+    # 稠密地图用于重定位与 /lio/global_map 可视化；Nav2 再从同一张
+    # 3D 图按地面高度投影 2D 障碍栅格。
+    # ICP 使用轻量、去短暂点后的重定位图；map_viz.pcd 仅用于 Foxglove。
+    lio.map.map_name: "map_reloc.pcd"
+    lio.map.ds_size: 0.2
+    lio.map.save_interval: 500
+
+    lio.ros.lidar_topic: "/livox/lidar"
+    lio.ros.imu_topic: "/livox/imu"
+
+    lio.sensor.lidar_type: 1
+    lio.sensor.blind: 0.5
+    lio.sensor.maxrange: 60.0
+    lio.sensor.filter_rate: 2
+    lio.sensor.enable_downsample: true
+    lio.sensor.voxel_fliter_size: 0.15
+    lio.sensor.gravity_norm: 9.7946
+    lio.sensor.imu_type: 1
+    lio.sensor.imu_na: 0.1
+    lio.sensor.imu_ng: 0.1
+    lio.sensor.imu_nba: 0.0001
+    lio.sensor.imu_nbg: 0.0001
+
+    lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412,
+                              1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+    # NOTE: 与 super_lio_mid360.yaml 保持同步 (T2.5 标定)
+    # 朝向约定: SLAM/重定位初始化时 狗头 = Mid360 X; yaw=0 → 机体系前进=雷达 X
+    # 2026-07-22 重建图: 建图时狗头=Mid360 X, 与 world +X 对齐
+    lio.extrinsic.odom_robo: [0.0, 0.0, 0.0, 0.0, 11.8, 0.0]
+
+    lio.hash_map.hash_capacity: 10000000
+    lio.hash_map.vox_resolution: 0.5
+    lio.hash_map.insert_resolution: 0.5
+
+    lio.kf.kf_type: 0
+    lio.kf.kf_max_iterations: 4
+    lio.kf.kf_align_gravity: true
+    lio.kf.kf_quit_eps: 0.001
+
+    lio.submap.submap_resolution: 0.5
+    lio.submap.submap_capacity: 1000000
+
+    lio.output.robot: true
+    lio.output.plan_env_world: false
+    lio.output.plan_env_body: false
+    lio.output.ml_map: false
+    lio.output.planner: false
+    lio.output.map: true
+    lio.output.dense: true
+    lio.output.pub_step: 1
+    # 兼容历史 pure Nav/Foxglove；hybrid 生产 launch 显式覆盖为 false。
+    lio.output.cloud_world_topic.enabled: true
+
+    lio.relocation.update_map: true
+    # [x,y,z, roll,pitch,yaw] 度. ICP 初值 = 狗在地图中的位姿.
+    # 建图与重定位开机姿态约定一致: 狗头 = Mid360 X;
+    # init_pose 全 0 表示「站在地图原点、狗头沿建图时的 Mid360 X / world +X」。
+    # 若开机姿态与建图原点不一致, 填实地 (x,y,yaw_deg), 或 ICP 前发 /initialpose.
+    # 重建地图后: 建图起点 = world 原点, 狗头沿 Mid360 X → init_pose 全 0.
+    # 旧值 [-4.33, 4.14, ...] 已作废 (2026-07-21 重建前备份见 maps/backup_20260721/).
+    # 2026-07-22 重建图: 建图起点认位, 与 reloc_spots map_origin 一致
+    lio.relocation.init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    lio.eva.timer: true

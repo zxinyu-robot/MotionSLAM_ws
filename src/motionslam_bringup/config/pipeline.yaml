@@ -1,0 +1,152 @@
+# MotionSLAM pipeline 参数 (Demo SCAN + 建图)
+cmd_vel_forwarder:
+  ros__parameters:
+    # 生产 hybrid 固定 sport；obstacles_avoid 仅历史对照/建图试走
+    backend: sport  # sport | obstacles_avoid (deprecated for nav)
+    vx_min: -0.4          # m/s
+    vx_max: 1.0           # m/s
+    vy_abs: 0.4           # m/s
+    vyaw_abs: 1.0         # rad/s
+    watchdog_timeout_ms: 400
+
+mapping_motion_guard:
+  ros__parameters:
+    enabled: true
+    max_linear_speed: 0.35       # m/s; 超过后暂停关键帧接收
+    max_angular_speed: 0.45      # rad/s
+    max_linear_acceleration: 0.8 # m/s^2
+    max_yaw_rate_change: 0.8     # rad/s^2
+    pause_mapping_on_violation: true
+
+mapping_keyframe_manager:
+  ros__parameters:
+    min_translation: 0.35        # m
+    min_rotation_deg: 8.0        # deg
+    min_interval_sec: 0.5
+    allow_interval_only_keyframes: false   # false=原地不因超时插关键帧
+
+pose_graph_backend:
+  ros__parameters:
+    enabled: true
+    map_frame: "map"
+    world_frame: "world"          # LIO 输出系; TF map->world 为全局校正
+    correction_topic: "/lio/map_to_odom"
+    scan_context_dist_threshold: 0.35
+    min_loop_keyframe_gap: 25
+    min_loop_travel_m: 2.0        # i→j 里程计路径长度不足则不回环
+    max_loop_revisit_m: 1.5       # 回环时 |pose_i - pose_j| 上限
+    loop_icp_max_corr_m: 2.5
+    loop_trans_weight: 500.0
+    loop_rot_weight: 800.0
+    odom_trans_weight: 200.0
+    odom_rot_weight: 400.0
+    max_loop_correction_m: 1.0
+    max_loop_correction_deg: 20.0
+    keyframe_voxel_leaf: 0.25
+    scan_context_z_min: -0.5
+    scan_context_z_max: 1.5
+    optimize_every_n_keyframes: 3
+
+# 在线 SC 检索 + 异步 pose-only PGO（Demo medium 主链）
+loop_detection_node:
+  ros__parameters:
+    enabled: true
+    map_frame: "map"
+    world_frame: "world"
+    correction_topic: "/lio/map_to_odom"
+    scan_context_dist_threshold: 0.35
+    min_loop_keyframe_gap: 25
+    min_loop_travel_m: 2.0
+    max_loop_revisit_m: 1.5
+    loop_trans_weight: 500.0
+    loop_rot_weight: 800.0
+    odom_trans_weight: 200.0
+    odom_rot_weight: 400.0
+    max_loop_correction_m: 0.3    # 在线更保守
+    max_loop_correction_deg: 12.0
+    keyframe_voxel_leaf: 0.25
+    scan_context_z_min: -0.5
+    scan_context_z_max: 1.5
+    tf_smooth_duration_s: 0.35
+
+local_map_node:
+  ros__parameters:
+    map_frame: "map"
+    world_frame: "world"
+    publish_hz: 10.0
+    require_stance_ok: true
+
+stance_gate_node:
+  ros__parameters:
+    sport_state_topic: "lf/sportmodestate"
+    min_foot_force: 80
+    min_feet_on_ground: 3
+    stable_frames: 3
+
+glass_suspect_layer:
+  ros__parameters:
+    cloud_topic: "/lio/cloud_world"
+    odom_topic: "/lio/robo/odom"
+    sport_state_topic: "lf/sportmodestate"
+    motor_joint_topic: "/motor_monitor/joint_states"
+    obstacle_frame_id: "world"
+    virtual_obstacle_topic: "/perception/virtual_obstacles"
+    forward_range_m: 1.5
+    forward_half_angle_deg: 35.0
+    near_range_min_m: 0.35
+    sparse_point_threshold: 12
+    range_obstacle_near_m: 0.55
+    publish_hz: 5.0
+    # P1 零先验：Ray Casting 遮挡矛盾 + 强度镜面
+    ray_bin_deg: 2.0
+    occlusion_gap_min_m: 0.25
+    occlusion_violation_min_bins: 3
+    z_band_min_m: 0.15
+    z_band_max_m: 1.6
+    intensity_enabled: true
+    intensity_high_threshold: 180.0
+    intensity_low_threshold: 20.0
+    intensity_jump_ratio: 4.0
+    specular_isolated_max_points: 2
+    specular_score_threshold: 0.45
+    wall_void_wall_score_threshold: 0.35
+    # P2 触觉确认 + 虚拟障碍固化
+    tactile_enabled: true
+    tau_delta_threshold_nm: 6.0
+    tau_front_min_nm: 12.0
+    imu_impact_threshold: 2.5
+    suspect_window_s: 3.0
+    wall_width_m: 0.6
+    wall_height_m: 1.2
+    wall_z_base_m: 0.15
+    wall_resolution_m: 0.05
+    max_solid_patches: 8
+
+motor_monitor_node:
+  ros__parameters:
+    lowstate_topic: "lf/lowstate"       # 导航时低频足够; 需 500Hz 可改 lowstate
+    summary_hz: 2.0
+    stale_timeout_sec: 1.5
+    temp_warn_c: 70.0
+    temp_crit_c: 80.0
+    tau_warn_nm: 18.0
+    tau_crit_nm: 28.0
+    dq_warn_rad_s: 18.0
+    lost_delta_warn: 1
+    power_v_min: 22.0
+    log_file: "/tmp/motor_monitor_alerts.log"
+    enable_log_file: true
+    min_log_interval_sec: 3.0
+    require_foc_mode: false             # sport 模式下 mode 可能非 0x01
+
+map_session_manager:
+  ros__parameters:
+    floor_registry_file: "/ws/maps/floor_registry.yaml"
+    building_id: "building_01"
+    floor_id: "floor_01"
+    map_id: "building_01_floor_01"
+    session_id: "local_session"
+    tile_id: "main"
+    max_fitness: 0.3  # 真机 ICP 门控；验收可改严 (原 1.0 过宽)
+    bounds_margin: 0.15
+    state_page: "/dev/shm/motionslam_navigation_context"

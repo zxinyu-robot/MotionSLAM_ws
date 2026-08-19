@@ -1,0 +1,91 @@
+记录文件: /ws/docs/测试验收/step1_baseline_20260807_083956.txt
+=== Step 1 Lean 基线验收 ===
+时间: 2026-08-07T08:39:56+00:00
+
+--- S1-1 栈能启动 ---
+[PASS] S1-1 节点 demo_scan_bt_orchestrator 在线
+[PASS] S1-1 节点 cmd_vel_forwarder 在线
+[PASS] S1-1 节点 scan_planner_node 在线
+[PASS] S1-1 节点 closed_loop_controller 在线
+[PASS] S1-1 节点 super_lio_node 在线
+
+--- S1-4 /motion/command 单链（订阅数） ---
+[PASS] S1-4 /motion/command pub=1 sub=1
+Publisher count: 1
+
+Node name: closed_loop_controller
+Node namespace: /
+Topic type: motionslam_msgs/msg/MotionCommand
+Endpoint type: PUBLISHER
+GID: 01.10.89.16.81.a9.8c.de.52.ff.77.e5.00.00.17.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RELIABLE
+  History (Depth): KEEP_LAST (20)
+  Durability: VOLATILE
+  Lifespan: Infinite
+  Deadline: Infinite
+  Liveliness: AUTOMATIC
+
+--- S1-3 /planning/bspline ---
+等待 15s 采样 hz（需 BT 已 dispatch subgoal）...
+
+[FAIL] S1-3 未检测到 bspline hz（确认 autostart 或手动 pub /demo/mission/start）
+
+--- S1-5 /lio/cloud_world 订阅 baseline ---
+Type: sensor_msgs/msg/PointCloud2
+
+Publisher count: 1
+
+Node name: super_lio_node
+Node namespace: /
+Topic type: sensor_msgs/msg/PointCloud2
+Endpoint type: PUBLISHER
+GID: 01.10.b9.28.c5.cf.8c.2e.92.68.81.a7.00.00.1b.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RELIABLE
+  History (Depth): KEEP_LAST (10)
+  Durability: VOLATILE
+  Lifespan: Infinite
+  Deadline: Infinite
+  Liveliness: AUTOMATIC
+  Liveliness lease duration: Infinite
+
+Subscription count: 2
+
+Node name: demo_scan_bt_orchestrator
+Node namespace: /
+Topic type: sensor_msgs/msg/PointCloud2
+Endpoint type: SUBSCRIPTION
+GID: 01.10.1f.08.bd.62.17.88.7a.cd.7d.ab.00.00.1e.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RELIABLE
+  History (Depth): KEEP_LAST (10)
+  Durability: VOLATILE
+  Lifespan: Infinite
+  Deadline: Infinite
+  Liveliness: AUTOMATIC
+  Liveliness lease duration: Infinite
+
+Node name: scan_planner_node
+Node namespace: /
+Topic type: sensor_msgs/msg/PointCloud2
+Endpoint type: SUBSCRIPTION
+GID: 01.10.41.17.e5.31.98.25.68.94.f5.ab.00.00.1c.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: BEST_EFFORT
+  History (Depth): KEEP_LAST (5)
+  Durability: VOLATILE
+  Lifespan: Infinite
+  Deadline: Infinite
+  Liveliness: AUTOMATIC
+  Liveliness lease duration: Infinite
+
+[PASS] S1-5 cloud_world 订阅数已记录 (2)
+
+--- S1-2 / S1-6 人工项 ---
+[WARN] S1-2 lean 栈空场连续 ≥10 min 无 OOM（本脚本不自动 soak）（需真机/空场人工确认）
+[WARN] S1-4 H5 或 demo waypoints 2m ≥8/10：python3 scripts/verify/verify_scan_planner_h5.py --distance 2（需真机/空场人工确认）
+[WARN] S1-6 无 tegrastats；记录 free -h / top 快照到测试记录.md（需真机/空场人工确认）
+
+=== 汇总: PASS=7 FAIL=1 WARN=3 ===
+存在 FAIL，请先修复栈再复测。

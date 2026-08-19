@@ -1,0 +1,9 @@
+=== Step 3 SEARCH→NAV 闭环验收 ===
+时间: 2026-08-07T12:33:11+00:00  query=找打印机
+记录: /ws/docs/测试验收/step3_loop_20260807_123311.txt
+等待 LIO 15s...
+--- 请确保 edge_mvpi1_planner 已在 127.0.0.1:9877/9880 运行并已 --start-search ---
+[subgraph] listening 0.0.0.0:9877
+[feedback] listening 0.0.0.0:9880
+[planner] SEARCH dispatched command_id=search_260c1438 frontiers=[]
+[planner] ready. Commands: start-search via --start-search or send SIGUSR1

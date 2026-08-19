@@ -1,0 +1,141 @@
+# v1 端侧双路上行 + 语义下行 + 分层数据目录
+# mock: python3 scripts/offline/mock_edge_uplink_receiver.py
+
+data_layer_registry:
+  ros__parameters:
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    tile_id: "main"
+    map_id: "demo_live_map"
+    catalog_hz: 1.0
+    context_generation_topic: "/lio/backend/context_generation"
+    pgo_state_topic: "/lio/backend/pgo_state"
+    layer_event_topic: "/edge/data_layer/layer_event"
+    mission_event_topic: "/demo/mission/event"
+    lifecycle_state_topic: "/demo/lifecycle/state"
+
+subgraph_publisher:
+  ros__parameters:
+    enabled: true
+    edge_host: "${EDGE_HOST}"
+    subgraph_port: 9877
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    tile_id: "main"
+    map_id: "demo_live_map"
+    publish_hz: 1.0
+    queue_max: 8
+    connect_timeout_s: 2.0
+    send_timeout_s: 3.0
+    odom_topic: "/lio/robo/odom"
+    keyframe_poses_topic: "/lio/backend/keyframe_poses"
+    context_generation_topic: "/lio/backend/context_generation"
+    pgo_state_topic: "/lio/backend/pgo_state"
+    mission_event_topic: "/demo/mission/event"
+    layer_event_topic: "/edge/data_layer/layer_event"
+    use_bt_subgoal_as_frontier: false
+    frontier_min_dist_m: 2.5
+    frontier_max_dist_m: 15.0
+    frontier_max_count: 8
+    frontier_ray_count: 8
+    frontier_ray_dist_m: 5.0
+    frontier_snapshot_topic: "/demo/mission/frontier_snapshot"
+    log_each_uplink: true
+
+rgb_keyframe_uplink:
+  ros__parameters:
+    enabled: true
+    edge_host: "${EDGE_HOST}"
+    rgb_port: 9878
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    tile_id: "main"
+    map_id: "demo_live_map"
+    video_topic: "/frontvideostream"
+    stream_field: "video360p"
+    queue_max: 4
+    connect_timeout_s: 2.0
+    send_timeout_s: 8.0
+    min_payload_bytes: 32
+    odom_topic: "/lio/robo/odom"
+    context_generation_topic: "/lio/backend/context_generation"
+    subgraph_event_topic: "/edge/uplink/subgraph_event"
+    layer_event_topic: "/edge/data_layer/layer_event"
+    log_each_uplink: false
+    log_every_n: 30
+
+execution_feedback:
+  ros__parameters:
+    enabled: true
+    edge_host: "${EDGE_HOST}"
+    feedback_port: 9880
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    tile_id: "main"
+    map_id: "demo_live_map"
+    queue_max: 16
+    connect_timeout_s: 2.0
+    send_timeout_s: 3.0
+    odom_topic: "/lio/robo/odom"
+    context_generation_topic: "/lio/backend/context_generation"
+    mission_event_topic: "/demo/mission/event"
+    lifecycle_state_topic: "/demo/lifecycle/state"
+    layer_event_topic: "/edge/data_layer/layer_event"
+    log_each_uplink: true
+
+semantic_token_uplink:
+  ros__parameters:
+    enabled: true
+    edge_host: "${EDGE_HOST}"
+    token_port: 9876
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    tile_id: "main"
+    map_id: "demo_live_map"
+    bev_topic: "/semantic/bev_grid_world"
+    odom_topic: "/lio/robo/odom"
+    context_generation_topic: "/lio/backend/context_generation"
+    layer_event_topic: "/edge/data_layer/layer_event"
+    log_every_n: 15
+
+directive_receiver:
+  ros__parameters:
+    enabled: true
+    listen_host: "0.0.0.0"
+    listen_port: 9879
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    map_id: "demo_live_map"
+    frame_id: "world"
+    local_map_version: 1000000
+    require_known_frontier: false
+    known_frontier_ids: ["bt_next_subgoal"]
+    subgraph_event_topic: "/edge/uplink/subgraph_event"
+    context_generation_topic: "/lio/backend/context_generation"
+
+command_executor:
+  ros__parameters:
+    enabled: true
+    session_id: "demo_live"
+    floor_id: "floor_01"
+    map_id: "demo_live_map"
+    frame_id: "world"
+    local_map_version: 0
+    require_known_frontier: false
+    known_frontier_ids: ["bt_next_subgoal"]
+    require_lifecycle: true
+    max_odom_age_s: 2.0
+    odom_topic: "/lio/robo/odom"
+    pgo_state_topic: "/lio/backend/pgo_state"
+    context_generation_topic: "/lio/backend/context_generation"
+    subgraph_event_topic: "/edge/uplink/subgraph_event"
+    publish_nav_goal_on_accept: true
+
+# 分层传输端口（边侧 mock 需分别监听）
+# | layer_id           | 方向       | port |
+# |--------------------|-----------|------|
+# | spatial_voxel      | GO2→Edge  | 9876 |  预留 HashVoxel
+# | topology_subgraph  | GO2→Edge  | 9877 |
+# | perception_rgb     | GO2→Edge  | 9878 |
+# | exec_directive     | Edge→GO2  | 9879 |
+# | exec_feedback      | GO2→Edge  | 9880 |

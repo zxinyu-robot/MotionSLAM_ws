@@ -1,0 +1,140 @@
+# Demo 阶段 3D：SCAN-Planner 连续局部（无 NavFn 实时主链）
+scan_planner_node:
+  ros__parameters:
+    use_sim_time: false
+    fsm.navi_mode: 1
+    fsm.thresh_replan: 0.55
+    fsm.thresh_no_replan: 0.1
+    fsm.planning_horizon: 7.5
+    fsm.emergency_time: 1.0
+    fsm.fail_safe: true
+    fsm.max_replan_fail_count: 20
+    fsm.collision_lookahead: 2.5
+    # WITH_PCT_PLANNER 时 launch 覆盖 navi_mode=3，SCAN 跟踪 BT 转发的 /initial_path
+
+    grid_map.resolution: 0.05
+    grid_map.sliding_map_size_x: 10.0
+    grid_map.sliding_map_size_y: 10.0
+    grid_map.sliding_map_size_z: 5.0
+    grid_map.local_update_range_x: 6.0
+    grid_map.local_update_range_y: 6.0
+    grid_map.local_update_range_z: 2.0
+    grid_map.map_sliding_en: true
+    grid_map.map_sliding_thresh: 0.2
+    grid_map.double_cylinder_radius: 0.18
+    grid_map.double_cylinder_offset: 0.14
+    grid_map.body_height: 0.35
+    grid_map.obstacles_inflation_z_up: 0.08
+    grid_map.obstacles_inflation_z_down: 0.12
+    grid_map.frame_id: world
+    grid_map.ground_height: -0.45
+    # 相对地面 0.20 过低：地面起伏/近腿回波会把当前格标成障碍，急停 t=0
+    grid_map.obstacle_height_min: 0.32
+    grid_map.obstacle_height_max: 1.50
+    grid_map.min_cloud_range: 0.45
+    grid_map.sensor_type: lidar
+    grid_map.cloud_is_world: true
+    grid_map.need_extrinsic: false
+    grid_map.virtual_obstacle_enabled: true
+    grid_map.virtual_obstacle_topic: "/perception/virtual_obstacles"
+    grid_map.p_hit: 0.85
+    grid_map.p_miss: 0.40
+    grid_map.p_min: 0.12
+    grid_map.p_max: 0.98
+    grid_map.p_occ: 0.85
+    grid_map.max_ray_length: 5.0
+    # Foxglove 3D 代价图：debug_topics 开启后才 advertise /grid_map/*
+    grid_map.debug_topics: true
+    grid_map.always_publish_viz: true
+    viz.always_publish: true
+
+    manager.max_vel: 0.5
+    manager.max_acc: 0.5
+    manager.max_jerk: 4.0
+    manager.control_points_distance: 0.2
+    manager.feasibility_tolerance: 0.5
+    manager.planning_horizon: 7.5
+
+    optimization.lambda_smooth: 1.0
+    optimization.lambda_collision: 1.0
+    optimization.lambda_feasibility: 0.1
+    optimization.lambda_fitness: 0.8
+    optimization.dist0: 0.35
+    optimization.collision_check_time: 2.5
+    optimization.max_vel: 0.5
+    optimization.max_acc: 0.5
+    optimization.acc_tolerance: 1.15
+    optimization.vel_tolerance: 0.15
+    optimization.order: 3
+
+demo_scan_bt_orchestrator:
+  ros__parameters:
+    tick_hz: 10.0
+    subgoal_reach_m: 0.45
+    min_execute_before_reach_s: 1.5
+    progress_dist_delta_m: 0.12
+    stuck_timeout_s: 55.0
+    stuck_redispatch_max: 6
+    replan_fail_threshold: 8
+    plan_ready_timeout_s: 12.0
+    cloud_ready_min_messages: 25
+    cloud_ready_window_s: 5.0
+    cloud_settle_s: 3.0
+    max_subgoal_dist_m: 8.0
+    autostart_lifecycle: true
+    goal_topic: move_base_simple/goal
+    waypoints_file: ""
+    glass_aware_enabled: true
+    glass_slow_factor: 0.30
+    glass_halt_wait_s: 1.5
+    glass_detour_timeout_s: 5.0
+    glass_max_recovery: 3
+    glass_backup_m: 0.20
+    require_stance_on_glass_halt: true
+    # PlanFailRecovery: 规划失败停重试 → 判漂移 → ICP/脱困 → 再规划
+    plan_fail_recovery_enabled: true
+    plan_fail_pause_after: 2
+    max_plan_fail_recovery: 4
+    drift_trans_m_threshold: 0.25
+    drift_yaw_deg_threshold: 8.0
+    drift_odom_jump_m: 0.45
+    drift_anchor_trans_m: 0.35
+    drift_anchor_yaw_deg: 10.0
+    icp_wait_timeout_s: 20.0
+    escape_backup_m: 0.80
+    escape_sidestep_m: 0.35
+    escape_step_timeout_s: 8.0
+    relocation_max_fitness: 0.35
+    # MVPI1：semantic_objnav 时由 command_executor → /demo/mission/semantic_goal 驱动
+    mission_mode: demo_waypoints
+    default_frame_id: world
+    semantic_goal_topic: /demo/mission/semantic_goal
+    semantic_autostart_mission: false
+    pct_global_nav_enabled: false
+    scan_track_pct_path: true
+    pct_initial_path_topic: /initial_path
+    pct_goal_topic: /goal_pose
+    pct_global_path_topic: /global_path
+    pct_fallback_direct: false
+    return_home_enabled: true
+    breadcrumb_spacing_m: 0.60
+    link_lost_timeout_s: 8.0
+
+closed_loop_controller:
+  ros__parameters:
+    time_forward: 1.0
+    heading_error_threshold: 0.8
+    kp_pos: 0.8
+    kp_yaw: 1.5
+    max_vx: 0.5
+    max_vy: 0.35
+    max_vyaw: 1.0
+    finish_dist: 0.15
+    invert_linear_x: false
+    stop_publish_interval_ms: 100.0
+
+cmd_vel_forwarder:
+  ros__parameters:
+    backend: sport
+    sport_free_avoid_enabled: false
+    unitree_avoidance_enabled: false

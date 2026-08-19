@@ -1,0 +1,44 @@
+<!-- Demo 目标 BT 骨架（阶段 3D；执行由 demo_scan_bt_orchestrator.py 实现同等语义） -->
+<root main_tree_to_execute="DemoScanMain">
+  <BehaviorTree ID="DemoScanMain">
+    <RecoveryNode number_of_retries="6" name="DemoScanRecovery">
+      <Sequence name="Navigation">
+        <LocalizationReady/>
+        <HasNextSubgoal/>
+        <Fallback name="GlassAwareNavigate">
+          <Sequence name="ConservativeWhenGlass">
+            <IsGlassSuspected/>
+            <SlowApproach factor="0.30"/>
+            <ScanPlannerRun/>
+          </Sequence>
+          <ScanPlannerRun/>
+        </Fallback>
+        <SubgoalReached/>
+      </Sequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GlassAwareRecovery/>
+        <BoundaryFallbackLooping/>
+        <ScanPlannerStuck/>
+        <RequestGlobalReroute/>
+        <HaltAndAlert/>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+
+  <!-- GlassAwareRecovery: Fallback 语义见 orchestrator ExecPhase -->
+  <BehaviorTree ID="GlassAwareRecovery">
+    <Fallback name="GlassRecoveryRoot">
+      <Sequence name="GlassConservativeSequence">
+        <Condition ID="LaserNoReturnAndNear"/>
+        <HaltAndWait duration_s="1.5"/>
+        <TryDetour sidestep_m="0.30"/>
+        <ScanPlannerRun timeout_s="5"/>
+      </Sequence>
+      <Sequence name="GlassExtremeFallback">
+        <BackUp distance_m="0.20"/>
+        <RequestAssist reason="glass_trap"/>
+        <Abort/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+</root>

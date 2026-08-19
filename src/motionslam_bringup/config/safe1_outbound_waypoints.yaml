@@ -1,0 +1,6 @@
+demo_scan_waypoints:
+  ros__parameters:
+    frame_id: world
+    body_height: 0.35
+    waypoints:
+      - {x: 6.999, y: -0.006, z: 0.35}

@@ -1,0 +1,18 @@
+[submodule "src/Super-LIO"]
+	path = src/Super-LIO
+	url = https://github.com/Liansheng-Wang/Super-LIO.git
+	branch = ros2
+[submodule "src/livox_ros_driver2"]
+	path = src/livox_ros_driver2
+	url = https://github.com/Livox-SDK/livox_ros_driver2.git
+[submodule "src/unitree_ros2"]
+	path = src/unitree_ros2
+	url = https://github.com/unitreerobotics/unitree_ros2.git
+[submodule "src/PCT-Planner"]
+	path = src/PCT-Planner
+	url = https://github.com/VectorRobotics/PCT_planner.git
+	branch = main
+[submodule "src/SCAN-Planner"]
+	path = src/SCAN-Planner
+	url = https://github.com/wuyi2121/SCAN-Planner.git
+	branch = ros2-community

@@ -1,0 +1,1213 @@
+diff --git a/config/pct_planner_params.yaml b/config/pct_planner_params.yaml
+index 0d39b4c..1c07672 100644
+--- a/config/pct_planner_params.yaml
++++ b/config/pct_planner_params.yaml
+@@ -75,3 +75,20 @@
+     # Recommended: 1.5-3.0 meters depending on robot speed
+     lookahead_distance: 1.25
+ 
++    # SLAM voxel cache: 0 = 不裁剪，长距离引导靠累积可通行区
++    cloud_crop_radius_m: 0.0
++    cloud_max_voxels: 800000
++
++    # 滚动引导：沿 seed 方向走到可通行区尽头，再建图延伸，不设距离上限
++    explore_guide_enabled: false
++    explore_seed_x: 2.70
++    explore_seed_y: -5.30
++    explore_rebuild_period_s: 12.0
++    explore_replan_remain_m: 2.5
++    explore_min_goal_dist_m: 2.0
++    explore_sector_deg: 70.0
++    explore_turn_policy: right
++    explore_junction_clear_m: 1.6
++    explore_turn_radius_m: 1.05
++    explore_turn_then_m: 3.8
++
+diff --git a/launch/pct_planner.launch.py b/launch/pct_planner.launch.py
+index f245dc9..32ffcee 100644
+--- a/launch/pct_planner.launch.py
++++ b/launch/pct_planner.launch.py
+@@ -16,7 +16,10 @@ def generate_launch_description():
+     default_params_file = os.path.join(pkg_dir, 'config', 'pct_planner_params.yaml')
+     map_path_env = os.environ.get('MAP_PATH', '')
+ 
+-    planner_lib_dir = os.path.join(pkg_prefix, '..', '..', 'src', 'route_planner', 'PCT_planner', 'pct_planner', 'planner', 'lib')
++    planner_lib_dir = os.path.join(
++        os.environ.get('MOTIONSLAM_WS', '/ws'),
++        'src', 'PCT-Planner', 'pct_planner', 'planner', 'lib',
++    )
+     gtsam_lib_dir = os.path.join(planner_lib_dir, '3rdparty', 'gtsam-4.1.1', 'install', 'lib')
+     smoothing_lib_dir = os.path.join(planner_lib_dir, 'build', 'src', 'common', 'smoothing')
+ 
+@@ -45,6 +48,18 @@ def generate_launch_description():
+         description='Absolute path to tomogram pickle file (required when local_mode=true). Auto-set from MAP_DIR/map.pickle if MAP_DIR exists.'
+     )
+ 
++    cloud_topic_arg = DeclareLaunchArgument(
++        'cloud_topic',
++        default_value='/lio/cloud_world',
++        description='Live world-frame cloud for SLAM tomogram (same topic SCAN remaps as cloud).'
++    )
++
++    odom_topic_arg = DeclareLaunchArgument(
++        'odom_topic',
++        default_value='/lio/robo/odom',
++        description='Odometry for A* start pose (same topic SCAN remaps as body_pose).'
++    )
++
+     pct_planner_node = Node(
+         package='pct_planner',
+         executable='pct_planner_node.py',
+@@ -57,6 +72,10 @@ def generate_launch_description():
+                 'tomogram_path': LaunchConfiguration('tomogram_path'),
+             }
+         ],
++        remappings=[
++            ('explored_areas', LaunchConfiguration('cloud_topic')),
++            ('state_estimation', LaunchConfiguration('odom_topic')),
++        ],
+         additional_env={'LD_LIBRARY_PATH': new_ld_path, 'PYTHONPATH': new_python_path},
+     )
+ 
+@@ -64,6 +83,8 @@ def generate_launch_description():
+         params_file_arg,
+         local_mode_arg,
+         tomogram_path_arg,
++        cloud_topic_arg,
++        odom_topic_arg,
+         LogInfo(msg='Starting PCT Planner Node...'),
+         pct_planner_node,
+         LogInfo(msg='PCT Planner Node launched'),
+diff --git a/launch/pct_visualizer.launch.py b/launch/pct_visualizer.launch.py
+index 72c91f5..3b30c6f 100644
+--- a/launch/pct_visualizer.launch.py
++++ b/launch/pct_visualizer.launch.py
+@@ -5,18 +5,25 @@ from launch import LaunchDescription
+ from launch.actions import LogInfo, DeclareLaunchArgument
+ from launch.substitutions import LaunchConfiguration
+ from launch_ros.actions import Node
+-from ament_index_python.packages import get_package_share_directory, get_package_prefix
++from ament_index_python.packages import get_package_share_directory
++
++
++def _planner_lib_dir() -> str:
++    env = os.environ.get('PCT_PLANNER_PLANNER_LIB', '')
++    if env:
++        return env
++    ws = os.environ.get('MOTIONSLAM_WS', '/ws')
++    return os.path.join(ws, 'src', 'PCT-Planner', 'pct_planner', 'planner', 'lib')
+ 
+ 
+ def generate_launch_description():
+     pkg_dir = get_package_share_directory('pct_planner')
+-    pkg_prefix = get_package_prefix('pct_planner')
+ 
+     # Get paths to config files
+     default_params_file = os.path.join(pkg_dir, 'config', 'pct_planner_params.yaml')
+     default_rviz_file = os.path.join(pkg_dir, 'config', 'rviz', 'default.rviz')
+ 
+-    planner_lib_dir = os.path.join(pkg_prefix, '..', '..', 'src', 'route_planner', 'PCT_planner', 'pct_planner', 'planner', 'lib')
++    planner_lib_dir = _planner_lib_dir()
+     gtsam_lib_dir = os.path.join(planner_lib_dir, '3rdparty', 'gtsam-4.1.1', 'install', 'lib')
+     smoothing_lib_dir = os.path.join(planner_lib_dir, 'build', 'src', 'common', 'smoothing')
+ 
+diff --git a/pct_planner/planner/config/param.py b/pct_planner/planner/config/param.py
+index 51352e5..9e6da00 100644
+--- a/pct_planner/planner/config/param.py
++++ b/pct_planner/planner/config/param.py
+@@ -1,7 +1,7 @@
+ class ConfigPlanner():
+     use_quintic = True
+     max_heading_rate = 10
+-    astar_cost_threshold = 50.0  # Maximum traversability cost for goal (default was 20)
++    astar_cost_threshold = 100.0  # 与 tomography cost_barrier 对齐
+     safe_cost_margin = 15.0  # Safety margin for cost calculations
+ 
+     # Smoothing parameters (GPMP Optimizer)
+diff --git a/pct_planner/planner/scripts/planner_wrapper.py b/pct_planner/planner/scripts/planner_wrapper.py
+index f55222b..5ec09be 100644
+--- a/pct_planner/planner/scripts/planner_wrapper.py
++++ b/pct_planner/planner/scripts/planner_wrapper.py
+@@ -28,6 +28,9 @@ class TomogramPlanner(object):
+ 
+         self.start_idx = np.zeros(3, dtype=np.int32)
+         self.end_idx = np.zeros(3, dtype=np.int32)
++        self.trav = None
++        self.elev_g = None
++        self.cost_threshold = float(getattr(self.cfg.planner, "astar_cost_threshold", 50.0))
+ 
+     def loadTomogram(self, tomo_file):
+         with open(self.tomo_dir + tomo_file + '.pickle', 'rb') as handle:
+@@ -76,6 +79,16 @@ class TomogramPlanner(object):
+         self.initPlanner(trav, trav_gx, trav_gy, elev_g, elev_c)
+         
+     def initPlanner(self, trav, trav_gx, trav_gy, elev_g, elev_c):
++        self.trav = trav
++        self.elev_g = elev_g
++        self.cost_threshold = float(getattr(self.cfg.planner, "astar_cost_threshold", 50.0))
++        n_valid = int(np.sum((elev_g > -50.0) & (trav <= self.cost_threshold)))
++        n_total = int(elev_g.size)
++        print(
++            f"[PCT] tomogram cells={n_total} valid_ground={n_valid} "
++            f"({100.0 * n_valid / max(n_total, 1):.1f}%) "
++            f"slices={self.n_slice} dim={self.map_dim} res={self.resolution:.3f}"
++        )
+         diff_t = trav[1:] - trav[:-1]
+         diff_g = np.abs(elev_g[1:] - elev_g[:-1])
+ 
+@@ -133,28 +146,114 @@ class TomogramPlanner(object):
+             if enable_optimizer_debug:
+                 self.planner.debug()
+ 
++    def _z_to_slice(self, z):
++        if z is None or self.slice_h0 is None or self.slice_dh is None or self.n_slice is None:
++            return 0
++        return int(np.clip(np.round((float(z) - self.slice_h0) / self.slice_dh), 0, self.n_slice - 1))
++
++    def _cell_valid(self, layer, idx1, idx2):
++        """A* indexes grid_map_[layer][idx2][idx1] == elev_g[layer, idx2, idx1]."""
++        if self.elev_g is None or self.trav is None:
++            return False
++        if layer < 0 or layer >= self.elev_g.shape[0]:
++            return False
++        if idx2 < 0 or idx2 >= self.elev_g.shape[1] or idx1 < 0 or idx1 >= self.elev_g.shape[2]:
++            return False
++        h = float(self.elev_g[layer, idx2, idx1])
++        c = float(self.trav[layer, idx2, idx1])
++        return h > -50.0 and np.isfinite(h) and c <= self.cost_threshold
++
++    def _cell_elev_cost(self, layer, idx1, idx2):
++        if not self._cell_valid(layer, idx1, idx2):
++            return -100.0, 1e9
++        return float(self.elev_g[layer, idx2, idx1]), float(self.trav[layer, idx2, idx1])
++
++    def _snap_to_valid(self, layer, idx1, idx2, radius=12, prefer_z=0.0):
++        """Snap onto nearest traversable ground. Prefer |elev-prefer_z| small (floor, not furniture)."""
++        best = None
++        best_score = 1e9
++
++        def consider(cand, n1, n2, why):
++            nonlocal best, best_score
++            if not self._cell_valid(cand, n1, n2):
++                return
++            h, _c = self._cell_elev_cost(cand, n1, n2)
++            if abs(h - prefer_z) > 1.0 and abs(h) > 0.8:
++                return
++            dist = max(abs(n1 - idx1), abs(n2 - idx2))
++            score = abs(h - prefer_z) + 0.04 * dist
++            if score < best_score:
++                best_score = score
++                best = (cand, n1, n2, why)
++
++        consider(layer, idx1, idx2, "exact")
++        n_slice = int(self.n_slice) if self.n_slice is not None else 1
++        for off in range(0, n_slice):
++            cands = [layer] if off == 0 else [layer - off, layer + off]
++            for cand in cands:
++                consider(cand, idx1, idx2, f"layer:{layer}->{cand}")
++        for r in range(1, radius + 1):
++            for d1 in range(-r, r + 1):
++                for d2 in range(-r, r + 1):
++                    if max(abs(d1), abs(d2)) != r:
++                        continue
++                    n1, n2 = idx1 + d1, idx2 + d2
++                    consider(layer, n1, n2, f"xy_r{r}")
++                    for off in range(0, n_slice):
++                        cands = [layer] if off == 0 else [layer - off, layer + off]
++                        for cand in cands:
++                            consider(cand, n1, n2, f"xy_r{r}_layer{cand}")
++        return best
++
+     def plan(self, start_pos, end_pos, start_z=None, end_z=None):
+-        # Calculate slice index from Z coordinate
+-        if start_z is not None:
+-            start_slice = int(np.clip(
+-                np.round((start_z - self.slice_h0) / self.slice_dh),
+-                0, self.n_slice - 1
+-            ))
+-            self.start_idx[0] = start_slice
+-        else:
+-            self.start_idx[0] = 0
+-
+-        if end_z is not None:
+-            end_slice = int(np.clip(
+-                np.round((end_z - self.slice_h0) / self.slice_dh),
+-                0, self.n_slice - 1
+-            ))
+-            self.end_idx[0] = end_slice
+-        else:
+-            self.end_idx[0] = 0
++        # Indoor same-floor: body_height (e.g. 0.35) is not a tomogram slice.
++        same_floor = True
++        if start_z is not None and end_z is not None:
++            same_floor = abs(float(start_z) - float(end_z)) < 1.2
+ 
++        self.start_idx[0] = self._z_to_slice(start_z)
++        self.end_idx[0] = self._z_to_slice(end_z)
+         self.start_idx[1:] = self.pos2idx(start_pos)
+         self.end_idx[1:] = self.pos2idx(end_pos)
++        raw_start = self.start_idx.copy()
++        raw_end = self.end_idx.copy()
++
++        snapped_s = self._snap_to_valid(
++            int(self.start_idx[0]), int(self.start_idx[1]), int(self.start_idx[2]),
++            prefer_z=0.0 if same_floor else (0.0 if start_z is None else float(start_z)),
++        )
++        if snapped_s is None:
++            print(f"[PCT] start cell invalid and no nearby ground: idx={raw_start.tolist()} z={start_z}")
++            return None
++        sl, s1, s2, swhy = snapped_s
++        self.start_idx[0], self.start_idx[1], self.start_idx[2] = sl, s1, s2
++
++        goal_layer = sl if same_floor else int(self.end_idx[0])
++        snapped_g = self._snap_to_valid(
++            goal_layer, int(self.end_idx[1]), int(self.end_idx[2]),
++            prefer_z=0.0 if same_floor else (0.0 if end_z is None else float(end_z)),
++        )
++        if snapped_g is None:
++            print(f"[PCT] goal cell invalid and no nearby ground: idx={raw_end.tolist()} z={end_z}")
++            return None
++        gl, g1, g2, gwhy = snapped_g
++        if same_floor:
++            snapped_g2 = self._snap_to_valid(sl, g1, g2)
++            if snapped_g2 is not None:
++                gl, g1, g2, gwhy2 = snapped_g2
++                gwhy = f"{gwhy};same_floor->{gwhy2}"
++        self.end_idx[0], self.end_idx[1], self.end_idx[2] = gl, g1, g2
++
++        sh, sc = self._cell_elev_cost(int(self.start_idx[0]), int(self.start_idx[1]), int(self.start_idx[2]))
++        gh, gc = self._cell_elev_cost(int(self.end_idx[0]), int(self.end_idx[1]), int(self.end_idx[2]))
++        print(
++            f"[PCT] snap start {raw_start.tolist()} -> {self.start_idx.tolist()} "
++            f"({swhy}) elev={sh:.2f} cost={sc:.1f}"
++        )
++        print(
++            f"[PCT] snap goal  {raw_end.tolist()} -> {self.end_idx.tolist()} "
++            f"({gwhy}) elev={gh:.2f} cost={gc:.1f} same_floor={same_floor}"
++        )
+ 
+         self.planner.plan(self.start_idx, self.end_idx, True)
+         path_finder: a_star.Astar = self.planner.get_path_finder()
+@@ -181,7 +280,40 @@ class TomogramPlanner(object):
+         traj_3d = transTrajGrid2Map(self.map_dim, self.center, self.resolution, traj_3d)
+ 
+         return traj_3d
+-    
++
++    def valid_world_xye(self, stride=2, z_abs_max=1.2):
++        """Traversable ground cells as (x, y, elev). Drops ceiling/furniture slices."""
++        if self.elev_g is None or self.trav is None or self.center is None:
++            return np.zeros((0, 3), dtype=np.float64)
++        valid = (
++            (self.elev_g > -50.0)
++            & np.isfinite(self.elev_g)
++            & (self.trav <= self.cost_threshold)
++            & (np.abs(self.elev_g) <= float(z_abs_max))
++        )
++        mask = np.any(valid, axis=0)
++        idx2, idx1 = np.nonzero(mask)
++        if idx2.size == 0:
++            return np.zeros((0, 3), dtype=np.float64)
++        if stride > 1:
++            idx2 = idx2[::stride]
++            idx1 = idx1[::stride]
++        xs = (idx2.astype(np.float64) - float(self.offset[0])) * self.resolution + float(self.center[0])
++        ys = (idx1.astype(np.float64) - float(self.offset[1])) * self.resolution + float(self.center[1])
++        zs = np.empty(idx2.size, dtype=np.float64)
++        for i, (i2, i1) in enumerate(zip(idx2, idx1)):
++            ev = self.elev_g[:, i2, i1]
++            ok = valid[:, i2, i1]
++            cands = ev[ok]
++            zs[i] = float(cands[np.argmin(np.abs(cands))]) if cands.size else 0.0
++        return np.column_stack((xs, ys, zs))
++
++    def valid_world_xy(self, stride=2):
++        xyz = self.valid_world_xye(stride=stride)
++        if xyz.shape[0] == 0:
++            return np.zeros((0, 2), dtype=np.float64)
++        return xyz[:, :2]
++
+     def pos2idx(self, pos):
+         pos = pos - self.center
+         idx = np.round(pos / self.resolution).astype(np.int32) + self.offset
+diff --git a/pct_planner/scripts/pct_planner_node.py b/pct_planner/scripts/pct_planner_node.py
+index 96669e0..9f88ff2 100755
+--- a/pct_planner/scripts/pct_planner_node.py
++++ b/pct_planner/scripts/pct_planner_node.py
+@@ -1,40 +1,48 @@
+ #!/usr/bin/env python3
+ 
+-import rclpy
+-from rclpy.node import Node
+-from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
+-import numpy as np
++import math
+ import threading
+-from rclpy.wait_for_message import wait_for_message
+-
+-from std_srvs.srv import Trigger
++import time
+ 
++import numpy as np
++import rclpy
++from geometry_msgs.msg import PointStamped, PoseStamped
++from nav_msgs.msg import Odometry, Path
++from rclpy.node import Node
++from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+ from sensor_msgs.msg import PointCloud2
+ from sensor_msgs_py import point_cloud2 as pc2
+-from nav_msgs.msg import Odometry, Path
+-from geometry_msgs.msg import PoseStamped, PointStamped
+ from std_msgs.msg import Header
+ from std_srvs.srv import Trigger
+ from visualization_msgs.msg import Marker
+ 
+-# Import PCT planner and tomogram visualization utilities
+ from pct_planner.scripts.pct_planner import PCTPlanner, TomogramConfig
+-from pct_planner.tomography.config.prototype import POINT_FIELDS_XYZI, GRID_POINTS_XYZI
++from pct_planner.tomography.config.prototype import GRID_POINTS_XYZI, POINT_FIELDS_XYZI
+ from pct_planner.tomography.scripts.tomogram_viz import generate_tomogram_pointcloud
+ from pct_planner.utils.path_utils import get_waypoint_from_traj
+ 
+ 
++def _points_from_cloud(msg: PointCloud2) -> np.ndarray:
++    points_list = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
++    if not points_list:
++        return np.zeros((0, 3), dtype=np.float32)
++    if isinstance(points_list[0], tuple):
++        return np.asarray(points_list, dtype=np.float32)[:, :3]
++    structured = np.asarray(points_list)
++    return np.column_stack(
++        (structured["x"], structured["y"], structured["z"])
++    ).astype(np.float32)
++
++
+ class PCTPlannerNode(Node):
+     def __init__(self):
+         super().__init__('pct_planner')
+ 
+-        # Declare localization mode parameter (boolean flag)
+         # True = localization mode with pre-loaded tomogram, False = SLAM mode with real-time map building
+         self.declare_parameter('local_mode', True)
+         self.declare_parameter('tomogram_path', '')  # Required when local_mode=True
+ 
+-        # Declare tomogram configuration parameters
+-        self.declare_parameter('resolution', 0.3)
++        self.declare_parameter('resolution', 0.15)
+         self.declare_parameter('slice_dh', 0.5)
+         self.declare_parameter('ground_h', 0.0)
+         self.declare_parameter('kernel_size', 5)
+@@ -46,21 +54,58 @@ class PCTPlannerNode(Node):
+         self.declare_parameter('cost_barrier', 50.0)
+         self.declare_parameter('safe_margin', 0.3)
+         self.declare_parameter('inflation', 0.2)
+-
+-        # Waypoint following parameters
+         self.declare_parameter('lookahead_distance', 2.0)
+ 
+-        # Get parameters
++        # SLAM voxel cache. Topic names stay PCT-native; launch remaps them to Super-LIO.
++        self.declare_parameter('cloud_voxel_m', 0.15)
++        self.declare_parameter('cloud_max_voxels', 400000)
++        self.declare_parameter('cloud_min_points', 3000)
++        self.declare_parameter('cloud_wait_s', 15.0)
++        self.declare_parameter('cloud_settle_s', 0.4)
++        self.declare_parameter('cloud_crop_radius_m', 0.0)
++
++        self.declare_parameter('explore_guide_enabled', False)
++        self.declare_parameter('explore_seed_x', 2.70)
++        self.declare_parameter('explore_seed_y', -5.30)
++        self.declare_parameter('explore_rebuild_period_s', 12.0)
++        self.declare_parameter('explore_replan_remain_m', 2.5)
++        self.declare_parameter('explore_min_goal_dist_m', 2.0)
++        self.declare_parameter('explore_sector_deg', 70.0)
++        self.declare_parameter('explore_turn_policy', 'right')
++        self.declare_parameter('explore_junction_clear_m', 1.6)
++        self.declare_parameter('explore_turn_radius_m', 1.05)
++        self.declare_parameter('explore_turn_then_m', 3.8)
++
+         self.local_mode = self.get_parameter('local_mode').value
+         self.tomogram_path = self.get_parameter('tomogram_path').value
+         self.lookahead_distance = self.get_parameter('lookahead_distance').value
++        self._cloud_voxel_m = float(self.get_parameter('cloud_voxel_m').value)
++        self._cloud_max_voxels = int(self.get_parameter('cloud_max_voxels').value)
++        self._cloud_min_points = int(self.get_parameter('cloud_min_points').value)
++        self._cloud_wait_s = float(self.get_parameter('cloud_wait_s').value)
++        self._cloud_settle_s = float(self.get_parameter('cloud_settle_s').value)
++        self._cloud_crop_radius_m = float(self.get_parameter('cloud_crop_radius_m').value)
++        self._explore_on = bool(self.get_parameter('explore_guide_enabled').value)
++        self._explore_seed_x = float(self.get_parameter('explore_seed_x').value)
++        self._explore_seed_y = float(self.get_parameter('explore_seed_y').value)
++        self._explore_rebuild_period_s = float(self.get_parameter('explore_rebuild_period_s').value)
++        self._explore_replan_remain_m = float(self.get_parameter('explore_replan_remain_m').value)
++        self._explore_min_goal_dist_m = float(self.get_parameter('explore_min_goal_dist_m').value)
++        self._explore_sector_rad = float(self.get_parameter('explore_sector_deg').value) * 3.141592653589793 / 180.0
++        self._explore_turn_policy = str(self.get_parameter('explore_turn_policy').value).strip().lower()
++        self._explore_junction_clear_m = float(self.get_parameter('explore_junction_clear_m').value)
++        self._explore_turn_radius_m = float(self.get_parameter('explore_turn_radius_m').value)
++        self._explore_turn_then_m = float(self.get_parameter('explore_turn_then_m').value)
++        self._explore_seed_reached = False
++        self._explore_goal = None
++        self._last_rebuild_mono = 0.0
++        self._last_explore_replan_mono = 0.0
++        self._plan_lock = threading.Lock()
+ 
+-        # Validate parameters
+         if self.local_mode and not self.tomogram_path:
+             self.get_logger().error("Localization mode (local_mode=True) requires 'tomogram_path' parameter")
+             raise ValueError("Missing tomogram_path for localization mode")
+ 
+-        # Create tomogram configuration
+         tomo_config = TomogramConfig(
+             resolution=self.get_parameter('resolution').value,
+             slice_dh=self.get_parameter('slice_dh').value,
+@@ -76,56 +121,126 @@ class PCTPlannerNode(Node):
+             cost_barrier=self.get_parameter('cost_barrier').value
+         )
+ 
+-        # State variables
+         self.current_odom = None
+         self.current_path = None
+         self.tomogram_processing = False
+         self.tomogram_lock = threading.Lock()
+         self.VISPROTO_I = None
+         self.VISPROTO_P = None
++        self._cloud_lock = threading.Lock()
++        self._voxel_map = {}
++        self._cloud_event = threading.Event()
++        self._cloud_frames = 0
++        self._last_cloud_log = 0.0
+ 
+-        # Initialize planner
+         self.planner = PCTPlanner(tomo_config=tomo_config)
+ 
+-        # QoS profiles
+         latching_qos = QoSProfile(
+             reliability=ReliabilityPolicy.RELIABLE,
+             durability=DurabilityPolicy.TRANSIENT_LOCAL,
+             history=HistoryPolicy.KEEP_LAST,
+             depth=1
+         )
+-
+         odom_qos = QoSProfile(
+             reliability=ReliabilityPolicy.BEST_EFFORT,
+             history=HistoryPolicy.KEEP_LAST,
+             depth=10
+         )
+ 
+-        # Subscribers (common to both modes)
+-        self.sub_odom = self.create_subscription(Odometry, '/state_estimation', self.odom_callback, odom_qos)
++        self.sub_odom = self.create_subscription(
++            Odometry, 'state_estimation', self.odom_callback, odom_qos
++        )
+         self.sub_goal = self.create_subscription(PoseStamped, '/goal_pose', self.goal_callback, 10)
+-        self.sub_clicked_point = self.create_subscription(PointStamped, '/clicked_point', self.clicked_point_callback, 10)
++        self.sub_clicked_point = self.create_subscription(
++            PointStamped, '/clicked_point', self.clicked_point_callback, 10
++        )
+ 
+-        # Publishers
+         self.pub_path = self.create_publisher(Path, '/global_path', latching_qos)
+         self.pub_waypoint = self.create_publisher(PointStamped, '/way_point', 10)
+         self.pub_tomogram = self.create_publisher(PointCloud2, '/tomogram', latching_qos)
+         self.pub_goal_pose = self.create_publisher(PoseStamped, '/goal_pose', 10)
+         self.pub_goal_marker = self.create_publisher(Marker, '/goal_marker', 10)
+ 
+-        # Mode-specific initialization
+         if self.local_mode:
+             self._init_relocalization_mode()
+         else:
+             self._init_slam_mode()
+ 
+         mode_str = "localization" if self.local_mode else "SLAM"
+-        self.get_logger().info(f"PCT Planner ready in {mode_str} mode")
++        self.get_logger().info(
++            f"PCT Planner ready in {mode_str} mode "
++            f"(odom={self.sub_odom.topic_name})"
++        )
+ 
+     def _init_slam_mode(self):
+-        """Initialize SLAM mode with service-triggered tomogram building."""
+-        self.srv_build_tomogram = self.create_service(Trigger, '/build_tomogram', self.build_tomogram_service_callback)
+-        self.get_logger().info("SLAM mode: Call /build_tomogram (std_srvs/Trigger) to build tomogram from /explored_areas")
++        """Subscribe remapped live cloud; /build_tomogram dumps the voxel-accumulated map."""
++        cloud_qos = QoSProfile(
++            reliability=ReliabilityPolicy.RELIABLE,
++            durability=DurabilityPolicy.VOLATILE,
++            history=HistoryPolicy.KEEP_LAST,
++            depth=10,
++        )
++        self.sub_cloud = self.create_subscription(
++            PointCloud2, 'explored_areas', self._on_live_cloud, cloud_qos
++        )
++        self.srv_build_tomogram = self.create_service(
++            Trigger, '/build_tomogram', self.build_tomogram_service_callback
++        )
++        self.srv_explore_guide = self.create_service(
++            Trigger, '/explore_guide', self._explore_guide_service
++        )
++        self.create_timer(1.0, self._explore_tick)
++        crop = self._cloud_crop_radius_m
++        crop_s = "none" if crop <= 0.0 else f"{crop:.1f}m"
++        self.get_logger().info(
++            f"SLAM mode: accumulating {self.sub_cloud.topic_name} "
++            f"(voxel={self._cloud_voxel_m:.2f}m crop={crop_s} max_vox={self._cloud_max_voxels}); "
++            f"explore_guide={self._explore_on} seed=({self._explore_seed_x:.2f},{self._explore_seed_y:.2f})"
++        )
++
++    def _on_live_cloud(self, msg: PointCloud2):
++        pts = _points_from_cloud(msg)
++        if pts.shape[0] == 0:
++            return
++        voxel = self._cloud_voxel_m
++        q = np.floor(pts / voxel).astype(np.int64)
++        packed = q[:, 0] * 73856093 + q[:, 1] * 19349663 + q[:, 2] * 83492791
++        packed_u, idx = np.unique(packed, return_index=True)
++        pts_u = pts[idx]
++        added = 0
++        with self._cloud_lock:
++            if len(self._voxel_map) < self._cloud_max_voxels:
++                store = self._voxel_map
++                cap = self._cloud_max_voxels
++                for key, point in zip(packed_u.tolist(), pts_u):
++                    if key not in store:
++                        store[key] = (float(point[0]), float(point[1]), float(point[2]))
++                        added += 1
++                        if len(store) >= cap:
++                            break
++            self._cloud_frames += 1
++            n_vox = len(self._voxel_map)
++        self._cloud_event.set()
++        now = time.monotonic()
++        if now - self._last_cloud_log >= 5.0:
++            self._last_cloud_log = now
++            self.get_logger().info(
++                f"SLAM cloud cache frames={self._cloud_frames} voxels={n_vox} "
++                f"(+{added} this msg) topic={self.sub_cloud.topic_name}"
++            )
++
++    def _snapshot_accumulated(self) -> np.ndarray:
++        with self._cloud_lock:
++            if not self._voxel_map:
++                return np.zeros((0, 3), dtype=np.float32)
++            pts = np.array(list(self._voxel_map.values()), dtype=np.float32)
++        radius = float(self.get_parameter('cloud_crop_radius_m').value)
++        self._cloud_crop_radius_m = radius
++        if radius > 0.0 and self.current_odom is not None and pts.shape[0] > 0:
++            pos = self.current_odom.pose.pose.position
++            dist = np.hypot(pts[:, 0] - pos.x, pts[:, 1] - pos.y)
++            pts = pts[dist <= radius]
++        return pts
+ 
+     def _init_relocalization_mode(self):
+         """Initialize relocalization mode with pre-loaded tomogram."""
+@@ -146,8 +261,8 @@ class PCTPlannerNode(Node):
+             raise
+ 
+     def build_tomogram_service_callback(self, request, response):
+-        """Build a tomogram by getting one message from /explored_areas (SLAM mode only)."""
+-        del request  # unused
++        """Freeze the voxel-accumulated live cloud into a tomogram (SLAM mode only)."""
++        del request
+         if self.local_mode:
+             response.success = False
+             response.message = "Not available in localization mode (local_mode=True)"
+@@ -160,49 +275,54 @@ class PCTPlannerNode(Node):
+                 return response
+             self.tomogram_processing = True
+ 
+-        # Start background thread to wait for message and process
++        n_vox = len(self._voxel_map)
+         threading.Thread(target=self._build_tomogram_thread, daemon=True).start()
+-
+         response.success = True
+-        response.message = "Tomogram build started, waiting for /explored_areas..."
++        response.message = (
++            f"Tomogram build started from accumulated {self.sub_cloud.topic_name} "
++            f"({n_vox} voxels so far)"
++        )
+         return response
+ 
+     def _build_tomogram_thread(self):
+-        """Background thread that waits for point cloud and builds tomogram."""
+         try:
+-
+-            self.get_logger().info("Waiting for point cloud on /explored_areas...")
+-            success, msg = wait_for_message(PointCloud2, self, '/explored_areas', time_to_wait=10.0)
+-
+-            if not success:
+-                self.get_logger().error("Timeout waiting for point cloud on /explored_areas")
+-                self.tomogram_processing = False
+-                return
+-
+-            points_list = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
+-            if len(points_list) < 1000:
+-                self.get_logger().warn(f"Point cloud too small ({len(points_list)} points), skipping")
++            if not self._cloud_event.is_set():
++                self.get_logger().info(f"Waiting for first cloud on {self.sub_cloud.topic_name}...")
++                if not self._cloud_event.wait(self._cloud_wait_s):
++                    self.get_logger().error(
++                        f"Timeout waiting for point cloud on {self.sub_cloud.topic_name}"
++                    )
++                    self.tomogram_processing = False
++                    return
++
++            if self._cloud_settle_s > 0.0:
++                time.sleep(self._cloud_settle_s)
++
++            points = self._snapshot_accumulated()
++            if points.shape[0] < self._cloud_min_points:
++                self.get_logger().warn(
++                    f"Accumulated cloud too small ({points.shape[0]} points, "
++                    f"min={self._cloud_min_points}), skipping"
++                )
+                 self.tomogram_processing = False
+                 return
+ 
+-            points = np.array(points_list, dtype=np.float32)[:, :3] if isinstance(points_list[0], tuple) else \
+-                     np.column_stack([np.array(points_list)['x'],
+-                                     np.array(points_list)['y'],
+-                                     np.array(points_list)['z']]).astype(np.float32)
+-
++            self.get_logger().info(
++                f"Building tomogram from {points.shape[0]} accumulated voxels "
++                f"({self._cloud_frames} frames on {self.sub_cloud.topic_name})"
++            )
+             self._process_tomogram_once(points)
+-
++            if self._explore_on:
++                self._explore_replan(reason="tomogram_ready")
+         except Exception as e:
+             self.get_logger().error(f"Error in tomogram build thread: {e}")
+             self.tomogram_processing = False
+ 
+     def odom_callback(self, msg: Odometry):
+-        """Odometry callback - updates current pose and publishes waypoints."""
+         self.current_odom = msg
+         self._publish_waypoint()
+ 
+     def clicked_point_callback(self, msg: PointStamped):
+-        """Clicked point callback - converts to goal pose."""
+         goal_pose = PoseStamped()
+         goal_pose.header = msg.header
+         goal_pose.pose.position = msg.point
+@@ -210,55 +330,433 @@ class PCTPlannerNode(Node):
+         self.pub_goal_pose.publish(goal_pose)
+         self.get_logger().info(f"Clicked point: ({msg.point.x:.2f}, {msg.point.y:.2f}, {msg.point.z:.2f})")
+ 
++    def _explore_guide_service(self, request, response):
++        del request
++        self._explore_on = True
++        self._explore_seed_reached = False
++        response.success = True
++        response.message = (
++            f"explore guide on; seed=({self._explore_seed_x:.2f},{self._explore_seed_y:.2f}); "
++            "rebuild tomogram then roll farthest traversable"
++        )
++        self.get_logger().info(response.message)
++        if self.planner.current_metadata is None:
++            self._request_rebuild("explore_start")
++        else:
++            self._explore_replan(reason="explore_start")
++        return response
++
++    def _request_rebuild(self, why: str) -> None:
++        if self.local_mode:
++            return
++        with self.tomogram_lock:
++            if self.tomogram_processing:
++                return
++            self.tomogram_processing = True
++        self.get_logger().info(f"rebuild tomogram ({why})")
++        threading.Thread(target=self._build_tomogram_thread, daemon=True).start()
++
++    def _remain_to_end(self):
++        if self.current_path is None or not self.current_path.poses or self.current_odom is None:
++            return None
++        p = self.current_odom.pose.pose.position
++        e = self.current_path.poses[-1].pose.position
++        return math.hypot(p.x - e.x, p.y - e.y)
++
++    def _explore_tick(self):
++        if not self._explore_on or self.local_mode:
++            return
++        now = time.monotonic()
++        if self.planner.current_metadata is None:
++            n_vox = len(self._voxel_map)
++            if n_vox >= self._cloud_min_points and now - self._last_rebuild_mono > 3.0:
++                self._last_rebuild_mono = now
++                self._request_rebuild("first_map")
++            if now - self._last_explore_replan_mono >= 2.0:
++                self._last_explore_replan_mono = now
++                self._explore_replan(reason="pre_tomogram")
++            return
++        remain = self._remain_to_end()
++        need_extend = remain is None or remain < 1.2
++        due_rebuild = (now - self._last_rebuild_mono) >= self._explore_rebuild_period_s
++        if now - self._last_explore_replan_mono < 8.0:
++            return
++        if due_rebuild:
++            self._last_rebuild_mono = now
++            self._request_rebuild("periodic")
++            return
++        if need_extend and not self.tomogram_processing:
++            self._last_explore_replan_mono = now
++            self._explore_replan(reason=f"remain={remain if remain is None else f'{remain:.2f}'}")
++
++    def _preferred_yaw(self, px: float, py: float):
++        if self._explore_seed_reached:
++            return None
++        dist = math.hypot(px - self._explore_seed_x, py - self._explore_seed_y)
++        if dist < 2.0:
++            self._explore_seed_reached = True
++            self.get_logger().info("explore seed reached; switch to unbounded traversable")
++            return None
++        return math.atan2(self._explore_seed_y - py, self._explore_seed_x - px)
++
++    def _wrap_ang(self, a: float) -> float:
++        return math.atan2(math.sin(a), math.cos(a))
++
++    def _odom_yaw(self) -> float:
++        q = self.current_odom.pose.pose.orientation
++        return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
++
++    def _trav_cells(self):
++        wrapper = getattr(self.planner, "planner", None)
++        if wrapper is None or not hasattr(wrapper, "valid_world_xye"):
++            return None
++        cells = wrapper.valid_world_xye(stride=1, z_abs_max=1.2)
++        if cells is None or cells.shape[0] == 0:
++            return None
++        return cells
++
++    def _ray_clearance(self, px: float, py: float, yaw: float, cells, max_r=8.0, half_w=0.55) -> float:
++        if cells is None:
++            return 0.0
++        c, s = math.cos(yaw), math.sin(yaw)
++        dx = cells[:, 0] - px
++        dy = cells[:, 1] - py
++        fwd = dx * c + dy * s
++        lat = -dx * s + dy * c
++        mask = (fwd > 0.4) & (fwd < max_r) & (np.abs(lat) < half_w)
++        if not np.any(mask):
++            return 0.0
++        return float(np.max(fwd[mask]))
++
++    def _detect_branches(self, px: float, py: float, heading: float):
++        cells = self._trav_cells()
++        names = {
++            "forward": heading,
++            "right": heading - 0.5 * math.pi,
++            "left": heading + 0.5 * math.pi,
++            "back": heading + math.pi,
++        }
++        clear = {k: self._ray_clearance(px, py, yaw, cells) for k, yaw in names.items()}
++        return clear, names, cells
++
++    def _choose_branch(self, clear, names):
++        thr = self._explore_junction_clear_m
++        open_frl = [k for k in ("forward", "right", "left") if clear.get(k, 0.0) >= thr]
++        is_junction = len(open_frl) >= 2
++        policy = self._explore_turn_policy
++        if self.current_odom is not None:
++            p = self.current_odom.pose.pose.position
++            dist_seed = math.hypot(p.x - self._explore_seed_x, p.y - self._explore_seed_y)
++        else:
++            dist_seed = 99.0
++        if policy == "right" and clear.get("right", 0.0) >= thr:
++            pick = "right"
++        elif policy == "left" and clear.get("left", 0.0) >= thr:
++            pick = "left"
++        elif open_frl:
++            pick = max(open_frl, key=lambda k: clear[k])
++        elif clear.get("back", 0.0) >= 1.0:
++            pick = "back"
++        elif dist_seed < 2.5:
++            pick = "left" if clear.get("left", 0.0) >= clear.get("back", 0.0) else "back"
++            is_junction = True
++        else:
++            pick = "right" if policy == "right" else "forward"
++            is_junction = True
++        return pick, float(names[pick]), is_junction
++
++    def _turn_path(self, px: float, py: float, from_yaw: float, to_yaw: float):
++        radius = self._explore_turn_radius_m
++        then_m = self._explore_turn_then_m
++        d = self._wrap_ang(to_yaw - from_yaw)
++        leave = to_yaw if abs(d) > 0.45 else from_yaw
++        poses = [(px + 0.55 * math.cos(leave), py + 0.55 * math.sin(leave))]
++        if abs(d) < 0.35:
++            ax, ay = poses[0]
++            n = max(6, int(then_m / 0.4))
++            for i in range(1, n + 1):
++                s = then_m * i / n
++                poses.append((ax + s * math.cos(to_yaw), ay + s * math.sin(to_yaw)))
++            return poses, "straight"
++        ax = poses[0][0] + 0.45 * math.cos(from_yaw)
++        ay = poses[0][1] + 0.45 * math.sin(from_yaw)
++        poses.append((ax, ay))
++        side = 1.0 if d > 0.0 else -1.0
++        cx = ax + radius * math.cos(from_yaw + side * 0.5 * math.pi)
++        cy = ay + radius * math.sin(from_yaw + side * 0.5 * math.pi)
++        start_ang = math.atan2(ay - cy, ax - cx)
++        n = max(8, int(abs(d) / 0.16))
++        for i in range(1, n + 1):
++            a = start_ang + side * abs(d) * (i / n)
++            poses.append((cx + radius * math.cos(a), cy + radius * math.sin(a)))
++        bx, by = poses[-1]
++        n2 = max(6, int(then_m / 0.4))
++        for i in range(1, n2 + 1):
++            s = then_m * i / n2
++            poses.append((bx + s * math.cos(to_yaw), by + s * math.sin(to_yaw)))
++        return poses, ("left" if d > 0.0 else "right")
++
++    def _pick_explore_goal(self, px: float, py: float):
++        wrapper = getattr(self.planner, "planner", None)
++        if wrapper is None or not hasattr(wrapper, "valid_world_xye"):
++            return None
++        cells = wrapper.valid_world_xye(stride=2, z_abs_max=1.2)
++        if cells.shape[0] == 0:
++            return None
++        yaw = self._preferred_yaw(px, py)
++        dx = cells[:, 0] - px
++        dy = cells[:, 1] - py
++        dist = np.hypot(dx, dy)
++        far = dist >= self._explore_min_goal_dist_m
++        if not np.any(far):
++            far = dist >= 0.8
++        if yaw is None:
++            mask = far
++        else:
++            ang = np.arctan2(dy, dx)
++            dhead = np.arctan2(np.sin(ang - yaw), np.cos(ang - yaw))
++            mask = far & (np.abs(dhead) <= self._explore_sector_rad)
++            if not np.any(mask):
++                mask = far & (np.abs(dhead) <= 2.0 * self._explore_sector_rad)
++            if not np.any(mask):
++                mask = far
++        if not np.any(mask):
++            return None
++        score = dist.copy()
++        if yaw is not None:
++            ang = np.arctan2(dy, dx)
++            dhead = np.abs(np.arctan2(np.sin(ang - yaw), np.cos(ang - yaw)))
++            score = dist * (1.0 - 0.35 * np.clip(dhead / max(self._explore_sector_rad, 1e-3), 0.0, 1.5))
++        score = np.where(mask, score, -1.0)
++        order = np.argsort(score)[::-1]
++        goals = []
++        for i in order[:8]:
++            if score[i] < 0:
++                break
++            goals.append((float(cells[i, 0]), float(cells[i, 1]), 0.0))
++        if yaw is not None:
++            for dist_try in (1.2, 1.8, 2.5, 3.5, 4.5, 6.0):
++                gx = px + dist_try * math.cos(yaw)
++                gy = py + dist_try * math.sin(yaw)
++                goals.append((gx, gy, 0.0))
++        return goals
++
++    def _greedy_trav_path(self, px: float, py: float, yaw):
++        wrapper = getattr(self.planner, "planner", None)
++        if wrapper is None or not hasattr(wrapper, "valid_world_xye"):
++            return None
++        cells = wrapper.valid_world_xye(stride=1, z_abs_max=1.2)
++        if cells.shape[0] < 8:
++            return None
++        if yaw is None:
++            d0 = np.hypot(cells[:, 0] - px, cells[:, 1] - py)
++            i0 = int(np.argmax(d0))
++            heading = math.atan2(cells[i0, 1] - py, cells[i0, 0] - px)
++        else:
++            heading = yaw
++        cx, cy = px, py
++        poses = [(px, py)]
++        total = 0.0
++        for _ in range(80):
++            dx = cells[:, 0] - cx
++            dy = cells[:, 1] - cy
++            dist = np.hypot(dx, dy)
++            ang = np.arctan2(dy, dx)
++            dhead = np.arctan2(np.sin(ang - heading), np.cos(ang - heading))
++            mask = (dist > 0.22) & (dist < 1.15) & (np.abs(dhead) < 0.95)
++            if not np.any(mask):
++                mask = (dist > 0.22) & (dist < 1.6) & (np.abs(dhead) < 1.45)
++            if not np.any(mask):
++                break
++            score = np.where(mask, dist * (1.0 - 0.45 * np.abs(dhead)), -1.0)
++            i = int(np.argmax(score))
++            if score[i] < 0:
++                break
++            nx, ny = float(cells[i, 0]), float(cells[i, 1])
++            heading = math.atan2(ny - cy, nx - cx)
++            total += float(dist[i])
++            cx, cy = nx, ny
++            poses.append((cx, cy))
++            if total >= 40.0:
++                break
++        if len(poses) < 5 or total < 1.5:
++            return None
++        return poses, total
++
++    def _publish_xy_path(self, poses) -> bool:
++        path = Path()
++        path.header.frame_id = "world"
++        path.header.stamp = self.get_clock().now().to_msg()
++        for x, y in poses:
++            ps = PoseStamped()
++            ps.header = path.header
++            ps.pose.position.x = float(x)
++            ps.pose.position.y = float(y)
++            ps.pose.orientation.w = 1.0
++            path.poses.append(ps)
++        if self.current_path and self.current_path.poses:
++            oe = self.current_path.poses[-1].pose.position
++            ne = path.poses[-1].pose.position
++            remain = self._remain_to_end()
++            if math.hypot(oe.x - ne.x, oe.y - ne.y) < 0.8 and remain is not None and remain > 2.5:
++                return False
++        self.pub_path.publish(path)
++        self.current_path = path
++        self._last_explore_replan_mono = time.monotonic()
++        self.get_logger().info(f"Published greedy trav path poses={len(path.poses)}")
++        self._publish_waypoint()
++        end = path.poses[-1].pose.position
++        self._publish_goal_marker((end.x, end.y, 0.0), frame_id="world")
++        return True
++
++    def _explore_replan(self, reason: str = "") -> None:
++        if not self._explore_on or self.current_odom is None:
++            return
++        pos = self.current_odom.pose.pose.position
++        heading = self._odom_yaw()
++        clear, names, _cells = self._detect_branches(pos.x, pos.y, heading)
++        pick, to_yaw, is_junction = self._choose_branch(clear, names)
++        self.get_logger().info(
++            "junction F={:.1f} R={:.1f} L={:.1f} B={:.1f} pick={} "
++            "junction={} yaw={:.0f}->{:.0f} reason={}".format(
++                clear.get("forward", 0.0),
++                clear.get("right", 0.0),
++                clear.get("left", 0.0),
++                clear.get("back", 0.0),
++                pick,
++                is_junction,
++                math.degrees(heading),
++                math.degrees(to_yaw),
++                reason,
++            )
++        )
++        turn_poses, kind = self._turn_path(pos.x, pos.y, heading, to_yaw)
++        self.get_logger().info(
++            f"explore {kind} turn poses={len(turn_poses)} pick={pick}"
++        )
++        if self._publish_xy_path(turn_poses):
++            self._explore_goal = (turn_poses[-1][0], turn_poses[-1][1], 0.0)
++            return
++        if self.planner.current_metadata is None:
++            return
++        if self._explore_seed_reached:
++            goals = self._pick_explore_goal(pos.x, pos.y)
++            for goal in goals or []:
++                self.get_logger().info(
++                    f"explore try A* goal=({goal[0]:.2f},{goal[1]:.2f}) reason={reason}"
++                )
++                if self._plan_path(goal):
++                    self._explore_goal = goal
++                    return
++            greedy = self._greedy_trav_path(pos.x, pos.y, yaw)
++            if greedy is not None:
++                poses, total = greedy
++                self.get_logger().info(
++                    f"explore greedy len={total:.1f}m poses={len(poses)} reason={reason}"
++                )
++                if self._publish_xy_path(poses):
++                    self._explore_goal = (poses[-1][0], poses[-1][1], 0.0)
++                    return
++        sx, sy = self._explore_seed_x, self._explore_seed_y
++        poses = [(pos.x, pos.y)]
++        # 世界系：先朝 +x 前方再折向 seed（刚才走廊：前走再右转）
++        mid = (pos.x + 2.2, pos.y)
++        for t in (0.2, 0.4, 0.6, 0.8, 1.0):
++            poses.append((pos.x + (mid[0] - pos.x) * t, pos.y + (mid[1] - pos.y) * t))
++        ax, ay = poses[-1]
++        for t in (0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0):
++            poses.append((ax + (sx - ax) * t, ay + (sy - ay) * t))
++        remain = self._remain_to_end()
++        if remain is not None and remain > 1.5 and self.current_path is not None:
++            return
++        self.get_logger().info(
++            f"explore corridor poses={len(poses)} seed=({sx:.2f},{sy:.2f}) reason={reason}"
++        )
++        if self._publish_xy_path(poses):
++            self._explore_goal = (poses[-1][0], poses[-1][1], 0.0)
++
+     def goal_callback(self, msg: PoseStamped):
+-        """Goal callback - plans path to the received goal pose."""
+         goal = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+         self._plan_path(goal)
+ 
+-    def _process_tomogram_once(self, points_to_process: np.ndarray):
+-        """Build a single tomogram from the provided point cloud (SLAM mode only)."""
+-        try:
+-            self.get_logger().info(f"Building tomogram from {len(points_to_process)} points...")
+-            metadata = self.planner.pointcloud_to_tomogram(points_to_process)
+-            self.planner.load_tomogram_direct(metadata)
+-            map_dim_x, map_dim_y = metadata['map_dim']
+-            self.VISPROTO_I, self.VISPROTO_P = GRID_POINTS_XYZI(metadata['resolution'], map_dim_x, map_dim_y)
+-            self.publish_tomogram(metadata)
+-        except Exception as e:
+-            self.get_logger().error(f"Failed to build tomogram: {e}")
+-        finally:
+-            self.tomogram_processing = False
+-
+     def _plan_path(self, goal: tuple):
+-        """Plan path to goal."""
+         if self.current_odom is None:
+             self.get_logger().warn("Cannot plan path: missing odometry")
+-            return
++            return False
+         if self.planner.current_metadata is None:
+             self.get_logger().warn("Cannot plan path: no tomogram available")
+-            return
+-
+-        try:
+-            pos = self.current_odom.pose.pose.position
+-            start_pose = (pos.x, pos.y, pos.z - 0.45)
+-
+-            path_msg = self.planner.plan_path_to_ros(start_pose, goal)
+-            if path_msg is not None:
+-                path_msg.header.frame_id = "map"
++            return False
++
++        with self._plan_lock:
++            try:
++                pos = self.current_odom.pose.pose.position
++                start_z = float(pos.z)
++                goal_z = float(goal[2])
++                if 0.15 <= goal_z <= 0.55 and abs(start_z) < 0.6:
++                    goal_z = start_z
++                start_pose = (pos.x, pos.y, start_z)
++                goal_pose = (goal[0], goal[1], goal_z)
++                self.get_logger().info(
++                    f"A* query start=({start_pose[0]:.2f},{start_pose[1]:.2f},{start_pose[2]:.2f}) "
++                    f"goal=({goal_pose[0]:.2f},{goal_pose[1]:.2f},{goal_pose[2]:.2f})"
++                )
++
++                path_msg = self.planner.plan_path_to_ros(start_pose, goal_pose)
++                if path_msg is None:
++                    self.get_logger().warn("Path planning failed")
++                    return False
++                path_msg.header.frame_id = "world"
+                 path_msg.header.stamp = self.get_clock().now().to_msg()
++                if path_msg.poses:
++                    h = path_msg.poses[0].pose.position
++                    if math.hypot(pos.x - h.x, pos.y - h.y) > 0.6:
++                        head = PoseStamped()
++                        head.header = path_msg.header
++                        head.pose.position.x = float(pos.x)
++                        head.pose.position.y = float(pos.y)
++                        head.pose.position.z = 0.0
++                        head.pose.orientation.w = 1.0
++                        path_msg.poses.insert(0, head)
++                if (
++                    self.current_path is not None
++                    and self.current_path.poses
++                    and path_msg.poses
++                ):
++                    oe = self.current_path.poses[-1].pose.position
++                    ne = path_msg.poses[-1].pose.position
++                    dend = math.hypot(oe.x - ne.x, oe.y - ne.y)
++                    remain = self._remain_to_end()
++                    if dend < 0.8 and remain is not None and remain > 2.5:
++                        self.get_logger().info(
++                            f"skip /global_path: end Δ={dend:.2f}m remain={remain:.2f}m"
++                        )
++                        return False
+                 self.pub_path.publish(path_msg)
+                 self.current_path = path_msg
++                self._last_explore_replan_mono = time.monotonic()
+                 self.get_logger().info(f"Published path with {len(path_msg.poses)} poses")
+                 self._publish_waypoint()
+-            else:
+-                self.get_logger().warn("Path planning failed")
+-                self.current_path = None
++                self._publish_goal_marker((goal_pose[0], goal_pose[1], 0.0), frame_id="world")
++                return True
++            except Exception as e:
++                self.get_logger().error(f"Path planning error: {e}")
++                return False
++        return False
+ 
++    def _process_tomogram_once(self, points_to_process: np.ndarray):
++        try:
++            self.get_logger().info(f"Building tomogram from {len(points_to_process)} points...")
++            metadata = self.planner.pointcloud_to_tomogram(points_to_process)
++            self.planner.load_tomogram_direct(metadata)
++            map_dim_x, map_dim_y = metadata['map_dim']
++            self.VISPROTO_I, self.VISPROTO_P = GRID_POINTS_XYZI(metadata['resolution'], map_dim_x, map_dim_y)
++            self.publish_tomogram(metadata)
+         except Exception as e:
+-            self.get_logger().error(f"Path planning error: {e}")
++            self.get_logger().error(f"Failed to build tomogram: {e}")
++        finally:
++            self.tomogram_processing = False
+ 
+     def _publish_waypoint(self):
+-        """Extract and publish the next waypoint from the current path."""
+         if self.current_path is None or self.current_odom is None:
+             return
+ 
+@@ -267,7 +765,6 @@ class PCTPlannerNode(Node):
+                 self.current_path, self.current_odom,
+                 lookahead_dist=self.lookahead_distance
+             )
+-
+             if waypoint_msg is not None:
+                 waypoint_msg.header.stamp = self.get_clock().now().to_msg()
+                 self.pub_waypoint.publish(waypoint_msg)
+@@ -275,7 +772,6 @@ class PCTPlannerNode(Node):
+             self.get_logger().error(f"Waypoint extraction error: {e}")
+ 
+     def _publish_goal_marker(self, goal: tuple, frame_id: str = "map"):
+-        """Publish red sphere marker for goal point."""
+         marker = Marker()
+         marker.header.frame_id = frame_id
+         marker.header.stamp = self.get_clock().now().to_msg()
+@@ -283,37 +779,29 @@ class PCTPlannerNode(Node):
+         marker.id = 0
+         marker.type = Marker.SPHERE
+         marker.action = Marker.ADD
+-
+         marker.pose.position.x = goal[0]
+         marker.pose.position.y = goal[1]
+         marker.pose.position.z = goal[2]
+         marker.pose.orientation.w = 1.0
+-
+         marker.scale.x = 0.5
+         marker.scale.y = 0.5
+         marker.scale.z = 0.5
+-
+         marker.color.r = 1.0
+         marker.color.g = 0.0
+         marker.color.b = 0.0
+         marker.color.a = 0.9
+-
+-        marker.lifetime.sec = 0  # Persistent
+-
++        marker.lifetime.sec = 0
+         self.pub_goal_marker.publish(marker)
+ 
+     def publish_tomogram(self, metadata: dict):
+-        """Publish tomogram as PointCloud2 for visualization."""
+         if self.VISPROTO_I is None or self.VISPROTO_P is None:
+             return
+-
+         try:
+             layers_t, layers_g = metadata['data'][0], metadata['data'][3]
+             global_points = generate_tomogram_pointcloud(
+                 layers_g, layers_t, self.VISPROTO_I, self.VISPROTO_P,
+                 metadata['center'], metadata['slice_dh']
+             )
+-
+             header = Header(stamp=self.get_clock().now().to_msg(), frame_id="map")
+             points_msg = pc2.create_cloud(header, POINT_FIELDS_XYZI, global_points)
+             self.pub_tomogram.publish(points_msg)

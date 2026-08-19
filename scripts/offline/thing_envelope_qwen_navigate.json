@@ -1,0 +1,56 @@
+{
+  "schema": "motionslam.thing_envelope.v1",
+  "tid": "qwen-replace-tid",
+  "bid": "demo_live",
+  "timestamp": 0,
+  "ttl_ms": 30000,
+  "method": "behavior_mode.execute",
+  "data": {
+    "profile": {
+      "sn": "go2_001",
+      "platform": "unitree_go2_edu",
+      "domain": "legged",
+      "type": "go2",
+      "thing_version": "1.0.0",
+      "capability_tags": ["Navigate", "ReturnHome", "RecoverGlass", "ExploreFrontier"]
+    },
+    "properties": {
+      "scene_type": "office_corridor",
+      "semantic_tags": ["forward_along_corridor"],
+      "language_query": "",
+      "map_id": "demo_live_map",
+      "floor_id": "floor_01",
+      "frame_id": "world",
+      "mode_state": "INIT"
+    },
+    "services": {
+      "actions": [
+        {
+          "skill": "Navigate",
+          "goal": {
+            "type": "waypoint",
+            "x": 2.0,
+            "y": 0.0,
+            "z": 0.35,
+            "yaw_rad": 0.0
+          }
+        }
+      ]
+    },
+    "policy": {
+      "mode_id": "navigate_office",
+      "mode_version": "1",
+      "policy_ref": "qwen2.5-vl-7b",
+      "lifecycle_policy": {
+        "on_link_lost": "ReturnHome",
+        "on_glass_trap": "RecoverGlass"
+      },
+      "adaptation_rationale": "走廊通视，选常规室内导航模式"
+    },
+    "models": {
+      "world_model": {"name": "Qwen2.5-VL-7B", "version": "7b"},
+      "planner": {"name": "pct_resident", "version": "cpp"},
+      "controller": {"name": "scan_navi_mode_3"}
+    }
+  }
+}

@@ -1,0 +1,26 @@
+# Legacy foxglove_bridge 0.8.2 (foxglove.websocket.v1) — 端口 8766
+foxglove_bridge_legacy:
+  ros__parameters:
+    port: 8766
+    address: "0.0.0.0"
+    topic_whitelist:
+      - "/lio/.*"
+      - "/tf"
+      - "/tf_static"
+      - "/livox/.*"
+      - "/map"
+      - "/map_cloud"
+      - "/plan"
+      - "/goal_pose"
+      - "/move_base_simple/goal"
+      - "/initial_path"
+      - "/global_costmap/.*"
+      - "/local_costmap/.*"
+      - "/grid_map/.*"
+      - "/planning/.*"
+      - "/goal_point"
+      - "/global_list"
+      - "/optimal_list"
+      - "/a_star_list"
+      - "/init_list"
+      - "/cmd_vel"

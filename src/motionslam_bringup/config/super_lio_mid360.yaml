@@ -1,0 +1,66 @@
+# Super-LIO 参数 (mid360, 建图/导航共用)
+# 基于上游 super_lio/config/livox_360.yaml, 差异:
+#   - save_map: true, 存图到 /ws/maps (T2.3 建图产出 PCD)
+#   - blind: 0.8 (上游默认 2.0 过大, 近距障碍进不了 /lio/cloud_world)
+/**:
+  ros__parameters:
+    lio.map.save_map: true
+    lio.map.if_filter: true
+    lio.map.save_map_dir: "/ws/maps"
+    lio.map.map_name: "map.pcd"
+    lio.map.ds_size: 0.2
+    lio.map.save_interval: 200
+
+    lio.ros.lidar_topic: "/livox/lidar"
+    lio.ros.imu_topic: "/livox/imu"
+
+    lio.sensor.lidar_type: 1
+    # NOTE: mid360 近距盲区 (m)。以雷达为球心, 半径内点不进 LIO/代价图。
+    # 过大(如 2.0)近处看不见易撞; 过小(如 0.2)机身噪声过敏走不动。
+    # Go2 机身尺度; 现场 2026-07-21 调至 0.5m
+    lio.sensor.blind: 0.5
+    lio.sensor.maxrange: 60.0
+    # NOTE: 降抽稀以喂密 /lio/cloud_world -> occupancy_inflate; 算力紧可改回 3 / 0.25
+    lio.sensor.filter_rate: 2
+    # 兼容旧配置；当前代码未读取此开关，实际帧内体素由 voxel_fliter_size 控制。
+    lio.sensor.enable_downsample: true
+    lio.sensor.voxel_fliter_size: 0.15
+    lio.sensor.gravity_norm: 9.7946
+    lio.sensor.imu_type: 1
+    lio.sensor.imu_na: 0.1
+    lio.sensor.imu_ng: 0.1
+    lio.sensor.imu_nba: 0.0001
+    lio.sensor.imu_nbg: 0.0001
+
+    # NOTE: mid360 内置 IMU-雷达外参 (上游默认), 与安装位姿无关
+    lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412,
+                              1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+    # NOTE: T2.5 外参 [tx,ty,tz,roll,pitch,yaw] 度; 用 scripts/calibrate_odom_robo.py 迭代标定
+    # 2026-07-13 真机标定: pitch=11.8, 静止站立 pitch 差 0.43° (F1 通过)
+    # 朝向约定: SLAM 初始化时 狗头 = Mid360 X 轴; odom_robo.yaw=0 表示机体系前进=雷达 X
+    # (world 在建图/重定位原点处 +X 即该朝向)。勿把 pitch 标定量误当成 yaw。
+    # 2026-07-22 重建图
+    lio.extrinsic.odom_robo: [0.0, 0.0, 0.0, 0.0, 11.8, 0.0]
+
+    lio.hash_map.hash_capacity: 2000000
+    lio.hash_map.vox_resolution: 0.5
+
+    lio.kf.kf_type: 0
+    lio.kf.kf_max_iterations: 4
+    lio.kf.kf_align_gravity: true
+    lio.kf.kf_quit_eps: 0.001
+
+    lio.output.robot: true
+    lio.output.plan_env_world: false
+    lio.output.plan_env_body: false
+    lio.output.ml_map: false
+    lio.output.planner: false
+    lio.output.map: true
+    lio.output.dense: true
+    lio.output.pub_step: 1
+    # pure Nav/建图兼容路径仍供 Foxglove 与历史消费者使用。
+    lio.output.cloud_world_topic.enabled: true
+
+    lio.eva.timer: true

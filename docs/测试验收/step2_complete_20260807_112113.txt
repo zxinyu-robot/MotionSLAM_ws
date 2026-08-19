@@ -1,0 +1,39 @@
+=== Step 2 收关验收 ===
+时间: 2026-08-07T11:21:13+00:00  trials=10 min_pass=8 dist=2.0m
+记录: /ws/docs/测试验收/step2_complete_20260807_112113.txt
+等待 LIO 50s...
+
+--- S2-5：10 次 mock 定向 2.0m ---
+  [trial 1/10]
+    PASS
+  [trial 2/10]
+    PASS (log)
+  [trial 3/10]
+    PASS (log)
+  [trial 4/10]
+    PASS (log)
+  [trial 5/10]
+    PASS (log)
+  [trial 6/10]
+    PASS
+  [trial 7/10]
+    PASS
+  [trial 8/10]
+    PASS
+  [trial 9/10]
+    PASS (log)
+  [trial 10/10]
+    PASS
+S2-5: 10/10 (要求 ≥8)
+
+--- S2-7：ttl 过期 ---
+S2-7 PASS
+
+--- S2-8：execution_feedback ---
+S2-8 PASS
+
+=== 汇总 ===
+  S2-5: PASS (10/10)
+  S2-7: PASS
+  S2-8: PASS
+Step 2 可标 [x]
