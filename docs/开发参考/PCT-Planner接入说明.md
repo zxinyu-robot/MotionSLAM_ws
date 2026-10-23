@@ -1,7 +1,7 @@
 # PCT 接入说明（当前实现）
 
 > 日常主链用 C++ `pct_resident_planner`，**不**起 Python/Open3D PCT。  
-> 进度见 [项目规划_Demo1三步.md](../规划/项目规划_Demo1三步.md)；操作见 [Demo阶段3D_runbook.md](../运维/Demo阶段3D_runbook.md)。
+> 当前目标与后续门禁见 [项目规划_空间状态运行时.md](../规划/项目规划_空间状态运行时.md)；旧 Demo 1 进度快照见 [项目规划_Demo1三步.md](../规划/项目规划_Demo1三步.md)；操作见 [Demo阶段3D_runbook.md](../运维/Demo阶段3D_runbook.md)。
 
 ---
 

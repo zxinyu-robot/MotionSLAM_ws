@@ -2,7 +2,7 @@
 
 > 依据 [eProsima Fast DDS Performance](https://www.eprosima.com/developer-resources/performance/eprosima-fast-dds-performance) 的通用结论整理，并结合 MotionSLAM 项目栈（**CycloneDDS + ROS 2 Humble**）给出可落地的优化思路。
 >
-> 关联文档：[项目规划_Demo1三步.md](../规划/项目规划_Demo1三步.md) · [项目开发规范准则](../项目规范/项目开发规范准则.md)
+> 当前目标与通信基座：[项目规划_空间状态运行时.md](../规划/项目规划_空间状态运行时.md) · [项目开发规范准则](../项目规范/项目开发规范准则.md)
 
 ---
 

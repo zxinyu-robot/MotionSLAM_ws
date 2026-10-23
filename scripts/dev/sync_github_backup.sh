@@ -19,6 +19,7 @@ SYNC_PATHS=(
   docs/开发参考/工程开发附录.md
   docs/架构/架构_端侧系统架构.md
   docs/测试验收/测试记录.md
+  docs/规划/项目规划_空间状态运行时.md
   docs/规划/项目规划_Demo1三步.md
   docs/项目规范/边端协同接口规范.md
   readme.md
