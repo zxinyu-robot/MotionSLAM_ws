@@ -22,6 +22,11 @@ SYNC_PATHS=(
   docs/规划/项目规划_空间状态运行时.md
   docs/规划/项目规划_Demo1三步.md
   docs/项目规范/边端协同接口规范.md
+  runtime/task_runtime/CMakeLists.txt
+  runtime/task_runtime/README.md
+  runtime/task_runtime/include/motionslam_runtime/task_runtime.hpp
+  runtime/task_runtime/src/task_runtime.cpp
+  runtime/task_runtime/tests/task_runtime_tests.cpp
   readme.md
   scripts/dev/export_arch_diagram_png.py
   src/motionslam_bringup/CMakeLists.txt

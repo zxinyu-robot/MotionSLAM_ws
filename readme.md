@@ -1,117 +1,121 @@
-# MotionSLAM_ws
+# MotionSLAM
 
-> **GitHub 私人备份仓**（脱敏快照，与狗端 `~/MotionSLAM_ws` 同步）。集成仓仍以 GitLab `origin` 为准；上游见 [THIRD_PARTY.md](THIRD_PARTY.md)。  
-> 雷达配置：复制 `src/motionslam_bringup/config/MID360_config.example.json` → `MID360_config.json` 后填现场 IP。  
-> **Git / 工作区状态**：[开发线Git记录与工作区快照.md](docs/开发参考/开发线Git记录与工作区快照.md)
+<p align="center">
+  <strong>空间状态 → 任务意图 → 安全动作 → 新状态</strong><br>
+  Linux-native runtime direction for legged-robot autonomy
+</p>
 
-Go2 自主避障导航自研栈：**Super-LIO + PCT C++ 常驻粗引导 + SCAN 连续局部 + BT 编排 + C++ pipeline**（Sport 转发、lifecycle context），
-运行于 Humble Docker 容器（host 网络 + CycloneDDS 与 Go2 机身 DDS 域 0 原生互通）。
+> **Repository snapshot:** public, desensitized GitHub backup. The historical Go2 integration is documented separately from the new runtime target. Current targets are not claims of completed or hardware-validated features.
 
-> **dev 日常主链**：`pct_resident_planner` → BT 写 `/initial_path` → SCAN `navi_mode=3` → closed_loop → Sport。  
-> 当前目标与实施计划见 [项目规划_空间状态运行时.md](docs/规划/项目规划_空间状态运行时.md)；历史 Demo 1 快照见 [项目规划_Demo1三步.md](docs/规划/项目规划_Demo1三步.md)；验收事实只看 [测试记录.md](docs/测试验收/测试记录.md)。
+## At a glance
 
-## 文档职责
+| Verified implementation snapshot | Runtime target — not yet validated |
+|---|---|
+| Go2 navigation chain: Super-LIO → PCT C++ → BT → SCAN → Sport | Linux-native task/state runtime; ROS 2 overlay remains frozen and untouched |
+| 1 m board navigation recorded at 0.43 m arrival offset on 2026-08-19 | Versioned spatial asset graph, decision snapshots, and three stable APIs |
+| Edge task closure, long-duration soak, and 3D relocalization recovery remain unverified in the cited snapshot | DDS + SHM + UDP data foundation; event-triggered task replanning |
 
-| 文档 | 回答 | 入口 |
-|------|------|------|
-| **规划** | 当前空间状态运行时目标、工作包与门禁 | [项目规划_空间状态运行时.md](docs/规划/项目规划_空间状态运行时.md) · [Demo 1 历史快照](docs/规划/项目规划_Demo1三步.md) |
-| **架构** | 三空间中间件 OS、与智源 RoboOS 对照、分层、部署、控制/数据面、模块边界（目标态，不当进度清单） | [架构_端侧系统架构.md](docs/架构/架构_端侧系统架构.md) |
-| **接口规范** | 边端边界消息与端口契约 | [边端协同接口规范.md](docs/项目规范/边端协同接口规范.md) |
-| **运维 / 测试** | 怎么启停、怎么验、干跑/真机证据 | [Demo阶段3D_runbook.md](docs/运维/Demo阶段3D_runbook.md) · [测试记录.md](docs/测试验收/测试记录.md) |
-| **开发参考** | PCT、DDS、标定、工程附录、边侧 Qwen2.5-VL、私人备份、Git 线快照 | [PCT 接入](docs/开发参考/PCT-Planner接入说明.md) · [工程附录](docs/开发参考/工程开发附录.md) · [Qwen2.5-VL](docs/开发参考/边侧Qwen2.5-VL接入说明.md) · [DDS](docs/开发参考/DDS通信性能优化参考.md) · [私人 GitHub 备份清单](docs/开发参考/私人GitHub备份清单.md) · [**Git 线快照**](docs/开发参考/开发线Git记录与工作区快照.md) |
+## System view
 
-临时草稿只进 [`docs/_inbox/`](docs/_inbox/)（非权威，AI 默认不索引）。
+```mermaid
+flowchart LR
+  subgraph Device[Robot device]
+    Sensor[LiDAR / IMU / odometry] --> State[State estimation]
+    State --> Assets[Versioned spatial assets]
+    Assets --> Snapshot[Decision snapshot]
+    Intent[Task Intent] --> Harness[Thin Harness]
+    Snapshot --> Harness
+    Harness --> BT[Local BT runtime]
+    BT --> Planner[PCT global guidance]
+    Planner --> SCAN[SCAN local planning]
+    SCAN --> Safety[Local safety and control]
+    Safety --> Body[Go2 body]
+    BT --> Feedback[Execution feedback]
+  end
+  Assets <--> SHM[SHM: same-host data and offline log]
+  Assets <--> DDS[DDS: discovery, state, control, events]
+  Assets <--> UDP[UDP: bulk spatial deltas]
+  DDS <--> Edge[Edge world/action model]
+  UDP <--> Edge
+  Edge --> Intent
+  Feedback --> DDS
+```
 
-## 快速开始
+The diagrams and implementation status are intentionally separated: the local planner and controller retain execution authority; the edge sends task intent, never velocity commands or BT tree serialization. Spatial state may update continuously. The device handles changes locally while task constraints remain valid and requests global replanning only when reachability, preconditions, or task ordering are affected.
+
+## Current navigation chain
+
+The existing hardware integration snapshot uses:
+
+```text
+Super-LIO → pct_resident_planner → BT /initial_path → SCAN navi_mode=3
+          → closed_loop_controller → cmd_vel_forwarder → Sport
+```
+
+PCT provides global guidance; BT is the unique execution-path writer; SCAN tracks the approved path and produces local continuous motion. Nav2 is not the main planning chain. Any Nav2 plugin experiment belongs on a separate branch and must not modify the frozen ROS 2 overlay.
+
+### Recorded evidence
+
+- `BOARD-CL`, 2026-08-19: 1.0 m target; recorded strict arrival offset 0.43 m.
+- Edge task closure (`EDGE-CL`), return-home recovery, dynamic-obstacle handling, and soak testing are not marked complete in the linked snapshot.
+- The Linux-native `runtime/task_runtime` is an initial C++20 lifecycle scaffold. It is not yet connected to Thin Harness, BT, PCT, or SCAN; its CMake/CTest run has not been executed in this VFS session.
+
+See [test records](docs/测试验收/测试记录.md) for the dated evidence and [the runtime roadmap](docs/规划/项目规划_空间状态运行时.md) for the target and gates.
+
+## Try the existing hardware stack
+
+These commands apply to the historical Go2 integration environment, not to the standalone Linux runtime core. Keep the existing ROS 2 overlay unchanged.
 
 ```bash
-# 1. 构建镜像（首次，联网）
+# Build the existing Humble image, if not already available
 docker build -t motionslam:humble docker/
 
-# 2. 释放 mid360（停用宇树 unitree_slam 栈）
+# On the robot host: release Mid-360 from Unitree SLAM
 ./scripts/motionslam stop-slam
 
-# 3. 进入容器
+# Enter the project container
 ./docker/run_container.sh
 
-# 4. 容器内编译主工作区 + SCAN 独立工作区
+# Inside the container: build the existing integration stack
 ./scripts/motionslam build
 cd scan_planner_ws && colcon build --symlink-install && cd ..
 source /ws/scripts/dev/source_ws_env.sh
-
-# 5. 互通冒烟测试
 ros2 topic list | grep rt/
 ```
 
-日常开栈不依赖 Python/Open3D PCT。`./scripts/dev/build_pct_planner.sh` 只在 `with_pct_python:=true` 对照调试时需要。
+For robot-specific prerequisites and safe start/stop steps, see the [3D demo runbook](docs/运维/Demo阶段3D_runbook.md). Do not start motion on hardware without the required operator and emergency-stop safeguards.
 
-恢复官方 SLAM: `/unitree/module/unitree_slam/bin/unitree_slam eth0`
+## Linux-native runtime scaffold
 
-## 目录
-
-| 路径 | 说明 |
-|------|------|
-| `docker/` | Humble 容器环境 |
-| `src/Super-LIO` | LIO（子模块） |
-| `src/livox_ros_driver2` | mid360 驱动（子模块） |
-| `src/unitree_ros2` | 宇树 ROS2 消息（子模块） |
-| `src/SCAN-Planner` | SCAN 局部规划（`scan_planner_node` + `closed_loop_controller`） |
-| `scan_planner_ws/` | SCAN 独立 colcon 工作区 |
-| `src/PCT-Planner` | 上游 Python/Open3D PCT（可选对照；日常不启） |
-| `pct_planner_ws/` | 上游 PCT 独立 colcon 工作区（仅 `with_pct_python`） |
-| `src/motionslam_ipc` | LIO 点云 / 地图 **POSIX SHM** 读写 |
-| `src/motionslam_pipeline` | `pct_resident_planner`、`cmd_vel_forwarder`、`virtual_obstacle_merge`、`bev_glass_layer`、lifecycle |
-| `src/motionslam_bringup` | Demo launch、BT 编排、参数 |
-| `scripts/` | `motionslam` CLI · nav/ map/ verify/ dev/ ops/ |
-
-## 建图
+The initial lifecycle core is outside the ROS 2 overlay and has its own CMake/CTest project:
 
 ```bash
-ros2 launch motionslam_bringup mapping.launch.py
-# 或
-ros2 launch motionslam_bringup slam_viz.launch.py
-# 宿主机
-./scripts/motionslam map start
+cmake -S runtime/task_runtime -B build/runtime-task -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/runtime-task
+ctest --test-dir build/runtime-task --output-on-failure
 ```
 
-## 自主导航 — 主链
+It currently covers basic task lifecycle, skill sequence progression, and fail-closed safety interlocks. It does not yet implement asset-version validation, scheduling/preemption, Thin Harness integration, or BT/PCT/SCAN adapters.
 
-### 默认数据流（`./scripts/motionslam nav start`）
+## Documentation
 
-| 层 | 职责 | 默认实现 |
-|----|------|----------|
-| **L0 Super-LIO** | mapping 模式 | `/lio/robo/odom` + `/lio/cloud_world` |
-| **L4 PCT** | 开机预热体素栅格 + 2D A* | `pct_resident_planner`（节点名 `pct_planner`）→ `/global_path` |
-| **L3 BT** | 唯一执行写口、stamp 校验、返航/恢复 | `demo_scan_bt_orchestrator`：收 `/global_path`，写 `/initial_path` |
-| **L2 SCAN** | 路径跟踪 + 局部 B-spline | `fsm.navi_mode=3` 跟踪 `/initial_path` |
-| **L1 forwarder** | 限幅 + Sport 下发 | `closed_loop_controller` → `/motion/command` → `cmd_vel_forwarder` |
+| Start here | What it covers |
+|---|---|
+| [Runtime roadmap](docs/规划/项目规划_空间状态运行时.md) | Current target, module boundaries, stages, and acceptance gates |
+| [System architecture](docs/架构/架构_端侧系统架构.md) | Spatial layers, APIs, runtime ownership, and deployment target |
+| [Edge interface specification](docs/项目规范/边端协同接口规范.md) | Three API contracts and legacy envelope compatibility |
+| [Test records](docs/测试验收/测试记录.md) | Dated implementation and robot evidence |
+| [Demo 1 archive](docs/规划/项目规划_Demo1三步.md) | Original work packages and 2026-08-19 history |
+| [Operations runbook](docs/运维/Demo阶段3D_runbook.md) | Existing Go2 integration start/stop procedures |
 
-```text
-waypoints / semantic goal
-  → BT 发 /goal_pose
-  → pct_resident_planner 回 /global_path（stamp 必须匹配）
-  → BT 加密后发 /initial_path
-  → SCAN navi_mode=3 → closed_loop → /motion/command → forwarder → Sport
-```
+## Repository map
 
-PCT 开时 **不** 把执行目标写到 `move_base_simple/goal`。`pct_fallback_direct` 默认 false，空路径不会直线抢跑。
+| Path | Role |
+|---|---|
+| `src/motionslam_pipeline` | Existing C++ planner, local map, and forwarding integration |
+| `src/motionslam_bringup` | Existing launch, BT orchestration, and edge compatibility code |
+| `src/motionslam_ipc` | Existing POSIX shared-memory point-cloud/map path |
+| `runtime/task_runtime` | Standalone Linux-native lifecycle core scaffold |
+| `docker/`, `scripts/` | Existing integration environment and operational tooling |
 
-`nav start` 默认：`WITH_PCT_PLANNER=true`、`WITH_GLASS_AWARE=true`、`WITH_FOXGLOVE=true`、`AUTOSTART=true`、`DEMO_PROFILE=demo_short`。边端 uplink / semantic_objnav / TensorRT BEV **默认关**。不存在 `nav start-lean`。
-
-### 日常命令
-
-```bash
-./scripts/motionslam nav start    # 起容器 + 停官方 SLAM + 起栈
-./scripts/motionslam nav watch    # 异常日志
-./scripts/motionslam nav stop
-```
-
-详见 [Demo阶段3D_runbook.md](docs/运维/Demo阶段3D_runbook.md) · [PCT-Planner接入说明.md](docs/开发参考/PCT-Planner接入说明.md)。
-
-### Foxglove
-
-`ws://${GO2_IP}:8765`；Fixed Frame=`world`；局部 `/planning/trajectory_path`、全局 `/global_path`。日常栈只开 8765（`with_legacy_bridge:=false`）。
-
-## 硬件前提
-
-- mid360 在线；自研栈前执行 `./scripts/motionslam stop-slam`
+**Source of truth:** this GitHub repository is a desensitized backup. The integrated development remote and its current status must be checked before treating this snapshot as the latest implementation or running hardware validation.
