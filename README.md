@@ -1,6 +1,26 @@
 # MotionSLAM_ws
 
-Unitree Go2 + Mid-360 端侧**跨楼层自主探索导航**（ROS 2 Humble）：面向工程落地的四足机器人自主定位、探索与导航，带故障恢复机制。采用**三空间状态架构**：世界空间产出空间状态（Super-LIO 定位 / 占据图），符号空间承载任务意图与决策（Thin Harness / task_runtime / BT 编排），度量空间在几何约束下执行安全动作（PCT 全局规划 → SCAN 局部规划 → forwarder → Sport），执行结果回写为新状态，闭环往复。核心规划/执行/运行时均为 C++ 实现。
+### 项目概述
+MotionSLAM_ws 是一个基于 ROS 2 Humble 构建的工作空间，专为搭载 Livox Mid-360 激光雷达的 Unitree Go2 四足机器人提供跨楼层自主导航能力而设计。
+
+### 核心特性
+该工作空间实现了一套稳健且具备容错能力的自主导航技术栈，核心功能涵盖：
+- 度量级定位（Metric Localization）
+- 全局与局部规划（Global & Local Planning）
+- 行为树任务编排（Behavior Tree Orchestration）
+- 底层运动控制（Low-level Sport Control）
+
+### 核心运行流程
+系统的核心运行流程串联了多个关键模块，形成完整的感知-规划-执行闭环：
+1. 状态估计：使用 Super-LIO 进行高精度位姿估计。
+2. 全局指引：PCT 模块提供全局路径指引。
+3. 任务执行：行为树（BT）负责任务调度与执行。
+4. 局部规划：SCAN 模块负责局部连续路径规划。
+5. 指令适配：通过转发器（Forwarders）适配控制指令。
+6. 硬件驱动：最终调用 Unitree Sport APIs 驱动硬件执行。
+
+### 系统架构亮点
+在底层硬件集成之上，该系统创新性地叠加了一个"三空间模型"（Three-space Model）。该模型用于规范数据在度量空间（Metric）、符号空间（Symbolic）以及世界空间（World）三个维度间的流转，从而提升系统的结构化感知与决策能力。
 
 ## 贡献
 
