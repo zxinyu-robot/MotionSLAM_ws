@@ -80,6 +80,10 @@ def _setup(context, *args, **kwargs):
     scan_cloud_topic = "/perception/scan_cloud_fused" if glass_enabled else cloud_topic
     body_pose_topic = "/local_map/body_pose" if flags["use_map_frame"] else "/lio/robo/odom"
     grid_frame = "map" if flags["use_map_frame"] else "world"
+    # map_mode=prior：PCT 吃全场景先验云（/prior_map/cloud，vkernel latch 发布），
+    # 全局路径由确定性 lookahead 接力逐段驱动 SCAN；explore 保持局部滑窗输入
+    map_mode = LaunchConfiguration("map_mode").perform(context).lower()
+    pct_cloud_topic = "/prior_map/cloud" if map_mode == "prior" else cloud_topic
 
     mapping_params = [
         mapping_yaml,
@@ -308,7 +312,7 @@ def _setup(context, *args, **kwargs):
                     "max_goal_snap_m": 1.2,
                 }],
                 remappings=[
-                    ("explored_areas", cloud_topic),
+                    ("explored_areas", pct_cloud_topic),
                     ("state_estimation", body_pose_topic),
                 ],
             )
@@ -317,6 +321,7 @@ def _setup(context, *args, **kwargs):
             LogInfo(
                 msg=(
                     "PCT C++ 常驻规划：预热 tomogram + /global_path；"
+                    f"map_mode={map_mode} pct_in={pct_cloud_topic}；"
                     f"SCAN fsm.navi_mode={3 if pct_enabled else 1}；"
                     "SCAN 跟踪 BT /initial_path；断网原路返航不依赖 A*"
                 )
@@ -656,6 +661,11 @@ def generate_launch_description():
                 "with_loop_detection",
                 default_value="auto",
                 description="auto=跟 profile；true/false 强制覆盖",
+            ),
+            DeclareLaunchArgument(
+                "map_mode",
+                default_value="explore",
+                description="explore=无先验图局部滑窗探索 | prior=PCT 吃 /prior_map/cloud 全场景先验图",
             ),
             DeclareLaunchArgument("session_id", default_value="demo_session"),
             DeclareLaunchArgument("tile_id", default_value="main"),

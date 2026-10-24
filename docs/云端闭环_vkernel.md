@@ -92,3 +92,20 @@ docker exec -d motionslam-cloud bash -lc \
   `demo_scan_planner_cloud.yaml` 已把 `obstacle_height_max` 放宽到 3.0，
   楼上体素才能进 `/grid_map/occupancy_inflate`；
   跨楼层真机更合理的做法是把高度过滤改成相对机器人/分层地图。
+
+## 地图模式契约（map_mode: explore | prior）
+
+任务 YAML `ros__parameters.map_mode`（或 adapter ROS 参数 `map_mode` 覆盖）声明本次
+任务是否有先验图，fsr_mission_adapter 把它透传进每条 `/demo/mission/event` JSON。
+
+- `explore`（默认）：无先验图。PCT 只吃滑动窗口内的已探索点云
+  （/local_map/cloud 或 /lio/cloud_world），远距离目标靠
+  frontier/语义候选逐段推进；编排模型不做长距离零样本路径生成。
+- `prior`：有先验图/重定位地图。vkernel 在场景加载时把全场景点云
+  （z 归一化、0.15m 体素降采样、不过 blind/FOV/遮挡）一次性 latch 发布到
+  `/prior_map/cloud`；launch `map_mode:=prior` 时 PCT 的
+  `explored_areas` 改订阅该话题，在全场景层析图上规划全局路径，
+  adapter 用确定性 lookahead 截取把全局路径逐段喂给 SCAN——
+  AABB 尺寸的接力由 lookahead 窗口自然形成，不需要学习模型切航点。
+
+语义/编排层只影响候选偏好与恢复选择，几何层（PCT/SCAN 占据判定）始终有权否决。

@@ -174,6 +174,15 @@ class VKernelSim(Node):
         self._cloud_pub = self.create_publisher(
             PointCloud2, str(self.get_parameter("cloud_topic").value), qos
         )
+        # prior 模式先验图：全场景云（不过 blind/FOV/遮挡，已 z 归一化）
+        qos_latched = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            depth=1,
+        )
+        self._prior_pub = self.create_publisher(
+            PointCloud2, "/prior_map/cloud", qos_latched
+        )
         # 主执行出口：closed_loop_controller → /cmd_vel (Twist)
         self.create_subscription(
             Twist,
@@ -229,6 +238,7 @@ class VKernelSim(Node):
             self.get_logger().info(
                 f"vkernel_sim: scene_file={scene_file} pts={len(self._scene_pts)}"
             )
+            self._publish_prior_map()
         if not self._cloud_points:
             self.get_logger().warn("vkernel_sim: 房间为空（walls/pillars 未配置）")
 
@@ -309,6 +319,50 @@ class VKernelSim(Node):
                     return self._z  # 无可达层：视为撞墙/悬空，保持当前高度
             return self._z
         return _height_at(self._x, self._y, self._ramps, self._floors)
+
+    def _publish_prior_map(self) -> None:
+        """全场景先验云：体素降采样后一次性 latch，供 prior 模式的全局规划。"""
+        pts = self._scene_pts[:, :4]
+        # 逐格按本层地面做通行高度带（先验图同样不能让地板/天花板进占据图）：
+        # 保留 z ∈ (本格最近地面 +0.08, +1.7) 的点，楼梯踏步随本格地面带保留。
+        if self._hm is not None:
+            (ox, oy), res, levels = self._hm
+            cx = ((pts[:, 0] - ox) / res).astype(np.int64)
+            cy = ((pts[:, 1] - oy) / res).astype(np.int64)
+            inside = (cy >= 0) & (cy < levels.shape[0]) & (cx >= 0) & (cx < levels.shape[1])
+            keep = np.zeros(len(pts), dtype=bool)
+            cell = cy[inside] * levels.shape[1] + cx[inside]
+            order = np.argsort(cell, kind="stable")
+            cell_s = cell[order]
+            bounds = np.flatnonzero(np.r_[True, cell_s[1:] != cell_s[:-1], True])
+            for a, b in zip(bounds[:-1], bounds[1:]):
+                cyy, cxx = divmod(int(cell_s[a]), levels.shape[1])
+                lv = np.sort(levels[cyy, cxx][np.isfinite(levels[cyy, cxx])])
+                if not lv.size:
+                    continue
+                idx = order[a:b]
+                z = pts[inside][idx, 2]
+                below = np.searchsorted(lv, z, side="right") - 1
+                ok = below >= 0
+                rel = z - lv[np.clip(below, 0, None)]
+                keep[np.flatnonzero(inside)[idx[ok & (rel > 0.08) & (rel < 1.7)]]] = True
+            pts = pts[keep]
+        key = np.floor(pts[:, :3] / 0.15).astype(np.int64)
+        _, idx = np.unique(key, axis=0, return_index=True)
+        band = pts[np.sort(idx)]
+        msg = PointCloud2()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self._world
+        msg.height = 1
+        msg.width = int(len(band))
+        msg.fields = self._FIELDS
+        msg.is_bigendian = False
+        msg.point_step = 16
+        msg.row_step = 16 * msg.width
+        msg.is_dense = True
+        msg.data = np.ascontiguousarray(band, dtype=np.float32).tobytes()
+        self._prior_pub.publish(msg)
+        self.get_logger().info(f"vkernel_sim: prior_map published {len(band)} pts")
 
     _FIELDS = [
         PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),

@@ -48,6 +48,7 @@ public:
         tick_s_ = 1.0 / ocfg_.tick_hz;
         max_subgoal_dist_m_ = declare_parameter("max_subgoal_dist_m", 8.0);
         frame_id_ = declare_parameter<std::string>("frame_id", "map");
+        declare_parameter<std::string>("map_mode", "");
         waypoints_file_ = declare_parameter<std::string>("waypoints_file", "");
         autostart_ = declare_parameter("autostart_lifecycle", true);
 
@@ -120,7 +121,8 @@ private:
             return;
         }
         mission_started_ = orchestrator_->submit(req);
-        RCLCPP_INFO(get_logger(), "mission submitted: %zu subgoals", req.subgoals.size());
+        RCLCPP_INFO(get_logger(), "mission submitted: %zu subgoals (map_mode=%s)",
+                    req.subgoals.size(), map_mode_.c_str());
     }
 
     bool load_waypoints(fm::MissionRequest& req) {
@@ -129,6 +131,16 @@ private:
             const YAML::Node params =
                 doc["demo_scan_waypoints"] ? doc["demo_scan_waypoints"]["ros__parameters"]
                                            : doc["ros__parameters"];
+            // 显式地图模式契约：explore=无先验图滑窗探索 | prior=先验图全局+接力
+            if (params["map_mode"]) map_mode_ = params["map_mode"].as<std::string>();
+            map_mode_ = get_parameter("map_mode").as_string().empty()
+                            ? map_mode_
+                            : get_parameter("map_mode").as_string();
+            if (map_mode_ != "explore" && map_mode_ != "prior") {
+                RCLCPP_WARN(get_logger(), "unknown map_mode '%s', fallback explore",
+                            map_mode_.c_str());
+                map_mode_ = "explore";
+            }
             for (const auto& wp : params["waypoints"]) {
                 fm::Subgoal sg;
                 sg.x = wp["x"].as<double>();
@@ -321,7 +333,8 @@ private:
 
     void emit_event(const std::string& ev, const std::string& detail = "", long idx = -1) {
         std_msgs::msg::String m;
-        m.data = "{\"event\":\"" + ev + "\",\"adapter\":\"fsr\",\"subgoal_index\":" +
+        m.data = "{\"event\":\"" + ev + "\",\"adapter\":\"fsr\",\"map_mode\":\"" +
+                 map_mode_ + "\",\"subgoal_index\":" +
                  std::to_string(idx >= 0 ? idx : (long)orchestrator_->current_subgoal()) +
                  (detail.empty() ? "" : ",\"detail\":\"" + detail + "\"") + "}";
         event_pub_->publish(m);
@@ -443,6 +456,7 @@ private:
     rclcpp::Time last_odom_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_cloud_{0, 0, RCL_ROS_TIME};
     std::string waypoints_file_, frame_id_, lifecycle_state_;
+    std::string map_mode_{"explore"};
     std::size_t events_seen_{0};
     int hb_ticks_{0};
     double tick_s_{0.1};

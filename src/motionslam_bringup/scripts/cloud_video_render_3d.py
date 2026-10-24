@@ -214,7 +214,14 @@ def _occ_prefix(occ_rows, idxs_t, vox=0.05):
     return snaps
 
 
-def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15):
+def _voxel_down(pts, vox=0.1):
+    key = np.floor(pts[:, :3] / vox).astype(np.int64)
+    _, idx = np.unique(key, axis=0, return_index=True)
+    return pts[np.sort(idx)]
+
+
+def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15,
+                scene=None):
     """双视口：左=实时点云，右=在线体素占据 + 轨迹带 + 航点球。"""
     import matplotlib
 
@@ -234,6 +241,12 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15):
     x0, x1 = min(xs) - 0.6, max(xs) + 0.6
     y0, y1 = min(ys) - 0.6, max(ys) + 0.6
     zmax = max(max(zs), 1.3)
+    if scene is not None and len(scene):
+        x0 = min(x0, scene[:, 0].min() - 0.2)
+        x1 = max(x1, scene[:, 0].max() + 0.2)
+        y0 = min(y0, scene[:, 1].min() - 0.2)
+        y1 = max(y1, scene[:, 1].max() + 0.2)
+        zmax = max(zmax, scene[:, 2].max() + 0.15)
     if cloud is not None:
         x0 = min(x0, cloud[:, 0].min() - 0.2)
         x1 = max(x1, cloud[:, 0].max() + 0.2)
@@ -287,6 +300,12 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15):
                     axL.plot([gx, gx], [y0, y1], [gz, gz], color="#1c2630", lw=0.35)
                 for gy in np.arange(math.floor(y0), math.ceil(y1) + 1, 1.0):
                     axL.plot([x0, x1], [gy, gy], [gz, gz], color="#1c2630", lw=0.35)
+            # GLB 场景底图：静态暗色点云，压在实时数据下层
+            if scene is not None and len(scene):
+                scnorm = np.clip(scene[:, 2] / zmax, 0, 1)
+                axL.scatter(scene[:, 0], scene[:, 1], scene[:, 2],
+                            c=scnorm, cmap="bone", s=0.6, alpha=0.35,
+                            linewidths=0, vmin=0, vmax=1)
             if surface is not None:
                 snorm = np.clip(surface[:, 2] / zmax, 0, 1)
                 axL.scatter(surface[:, 0], surface[:, 1], surface[:, 2],
@@ -311,6 +330,9 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15):
             for gx in np.arange(math.floor(x0), math.ceil(x1) + 1, 1.0):
                 axR.plot([gx, gx], [y0, y1], [0, 0], color="#1c2630", lw=0.35)
             occ = occ_snaps[k]
+            if scene is not None and len(scene):
+                axR.scatter(scene[:, 0], scene[:, 1], scene[:, 2],
+                            c="#33404e", s=0.5, alpha=0.25, linewidths=0)
             if occ is not None and len(occ):
                 # 按体素自身 z 范围归一→彩虹全谱（对齐真机占据图观感）
                 oz0, oz1 = float(occ[:, 2].min()), float(occ[:, 2].max())
@@ -484,6 +506,10 @@ def main():
     ap.add_argument("--timeout", type=float, default=480)
     ap.add_argument("--fps", type=int, default=15)
     ap.add_argument("--map-yaml", default="", help="vkernel 参数 yaml（生成地表点云面）")
+    ap.add_argument("--scene-npz", default="",
+                    help="vkernel 场景 npz（GLB 采样点）做静态底图")
+    ap.add_argument("--scene-z-offset", type=float, default=0.0,
+                    help="底图 z 偏移（与 vkernel odom_origin_z 对齐，取负）")
     ap.add_argument("--save-npz", default="", help="录制数据保存路径，便于离线反复渲染")
     ap.add_argument("--load-npz", default="", help="从 npz 直接渲染，不再订阅 ROS")
     args = ap.parse_args()
@@ -492,6 +518,12 @@ def main():
     if args.map_yaml:
         surface = _surface_cloud(_load_map_params(args.map_yaml))
     wpts = _load_waypoints(args.wp_yaml) if args.wp_yaml else None
+    scene = None
+    if args.scene_npz:
+        d0 = np.load(args.scene_npz)
+        scene = _voxel_down(d0["points"][:, :3].astype(np.float32), 0.1)
+        scene[:, 2] += float(args.scene_z_offset)
+        print(f"scene underlay: {len(scene)} pts")
 
     if args.load_npz:
         d = np.load(args.load_npz)
@@ -509,7 +541,8 @@ def main():
                     (float(t_val), occ_pts[ptr : ptr + n2].reshape(-1, 3)))
                 ptr += n2
         if args.style == "dual":
-            render_dual(traj, cloud, occ_rows, surface, wpts, args.out, fps=args.fps)
+            render_dual(traj, cloud, occ_rows, surface, wpts, args.out,
+                        fps=args.fps, scene=scene)
         else:
             render(traj, cloud, args.out, fps=args.fps, surface=surface)
         print(f"WROTE {args.out}")
@@ -547,7 +580,7 @@ def main():
                  occ_t=occ_t, occ_n=occ_n, occ_pts=occ_pts)
     if args.style == "dual":
         render_dual(node.traj, node.cloud, node.occ_rows, surface, wpts,
-                    args.out, fps=args.fps)
+                    args.out, fps=args.fps, scene=scene)
     else:
         render(node.traj, node.cloud, args.out, fps=args.fps, surface=surface)
     print(f"WROTE {args.out}")
