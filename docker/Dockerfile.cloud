@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasio-dev libwebsocketpp-dev \
     ros-humble-tf2-tools ros-humble-tf-transformations \
     ros-humble-rosbag2-storage-mcap \
-    python3-pip \
+    python3-pip python3-matplotlib python3-numpy \
+    ffmpeg fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # unitree_ros2 消息包编译依赖
