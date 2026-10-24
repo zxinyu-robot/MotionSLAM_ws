@@ -13,6 +13,7 @@
 ## 本仓 patch
 
 - `patches/scan-planner-motionslam.patch` — 应用到 SCAN-Planner 后于 `scan_planner_ws` 编译
+- 注：SCAN-Planner 的 pin `d62de08` 是 Jetson 本地提交、不在上游仓库；云端引导（`scripts/dev/cloud_bootstrap.sh`）用 `ros2-community` 分支头 + patch（其 `closed_loop_controller.cpp` 一个 hunk 与上游当前实现冲突，可跳过）
 - `patches/pct-planner-motionslam.patch` — PCT 可选对照改动
 
 ## 说明

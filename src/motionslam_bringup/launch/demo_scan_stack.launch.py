@@ -38,6 +38,8 @@ def _profile_flags(profile: str) -> dict[str, bool]:
 def _setup(context, *args, **kwargs):
     bringup_share = get_package_share_directory("motionslam_bringup")
     demo_yaml = os.path.join(bringup_share, "config", "demo_scan_planner.yaml")
+    extra_params_path = LaunchConfiguration("extra_params_file").perform(context)
+    extra_params = [extra_params_path] if extra_params_path else []
     edge_uplink_yaml = os.path.join(bringup_share, "config", "edge_uplink.yaml")
     mapping_yaml = os.path.join(bringup_share, "config", "super_lio_mid360.yaml")
     pipeline_yaml = os.path.join(bringup_share, "config", "pipeline.yaml")
@@ -89,6 +91,7 @@ def _setup(context, *args, **kwargs):
 
     scan_planner_params = [
         demo_yaml,
+        *extra_params,
         {
             "fsm.navi_mode": 3 if pct_enabled else 1,
             "grid_map.frame_id": grid_frame,
@@ -99,19 +102,31 @@ def _setup(context, *args, **kwargs):
         },
     ]
 
-    actions = [
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(bringup_share, "launch", "sensors.launch.py")
+    with_sensors = LaunchConfiguration("with_sensors").perform(context).lower() in ("true", "1", "yes")
+    with_lio = LaunchConfiguration("with_lio").perform(context).lower() in ("true", "1", "yes")
+    with_mock_robot = LaunchConfiguration("with_mock_robot").perform(context).lower() in ("true", "1", "yes")
+    with_thin_harness = LaunchConfiguration("with_thin_harness").perform(context).lower() in ("true", "1", "yes")
+
+    actions = []
+    if with_sensors:
+        actions.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(bringup_share, "launch", "sensors.launch.py")
+                )
             )
-        ),
-        Node(
-            package="super_lio",
-            executable="super_lio_node",
-            name="super_lio_node",
-            output="screen",
-            parameters=mapping_params + [{"use_sim_time": use_sim_bool}],
-        ),
+        )
+    if with_lio:
+        actions.append(
+            Node(
+                package="super_lio",
+                executable="super_lio_node",
+                name="super_lio_node",
+                output="screen",
+                parameters=mapping_params + [{"use_sim_time": use_sim_bool}],
+            )
+        )
+    actions.append(
         Node(
             package="motionslam_pipeline",
             executable="demo_navigation_context",
@@ -124,8 +139,37 @@ def _setup(context, *args, **kwargs):
                     "map_id": "demo_live_map",
                 }
             ],
-        ),
-    ]
+        )
+    )
+
+    if with_mock_robot:
+        actions.append(
+            Node(
+                package="motionslam_bringup",
+                executable="vkernel_sim.py",
+                name="vkernel_sim",
+                output="screen",
+                parameters=[os.path.join(bringup_share, "config", "vkernel_sim.yaml")],
+            )
+        )
+
+    if with_thin_harness:
+        actions.append(
+            Node(
+                package="motionslam_bringup",
+                executable="thin_harness_node.py",
+                name="thin_harness",
+                output="screen",
+                parameters=[
+                    {
+                        "local_map_id": "demo_live_map",
+                        "local_revision": 1,
+                        "local_platform": "unitree_go2_edu",
+                        "local_robot_id": "go2_001",
+                    }
+                ],
+            )
+        )
 
     if flags["loop_detection"]:
         actions.append(
@@ -199,7 +243,7 @@ def _setup(context, *args, **kwargs):
             executable="closed_loop_controller",
             name="closed_loop_controller",
             output="screen",
-            parameters=[demo_yaml, {"use_sim_time": use_sim_bool}],
+            parameters=[demo_yaml, *extra_params, {"use_sim_time": use_sim_bool}],
             remappings=[
                 ("body_pose", body_pose_topic),
             ],
@@ -210,7 +254,7 @@ def _setup(context, *args, **kwargs):
             executable="cmd_vel_forwarder",
             name="cmd_vel_forwarder",
             output="screen",
-            parameters=[pipeline_yaml, demo_yaml],
+            parameters=[pipeline_yaml, demo_yaml, *extra_params],
         ),
     ]
     bt_params = {
@@ -218,7 +262,6 @@ def _setup(context, *args, **kwargs):
         "autostart_lifecycle": autostart_lifecycle.lower() in ("true", "1", "yes"),
         "demo_profile": profile,
         "default_frame_id": grid_frame,
-        "glass_aware_enabled": glass_enabled,
         "return_home_enabled": True,
     }
     if semantic_objnav_enabled:
@@ -240,6 +283,7 @@ def _setup(context, *args, **kwargs):
             output="screen",
             parameters=[
                 demo_yaml,
+                *extra_params,
                 bt_params,
             ],
         )
@@ -524,6 +568,26 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument(
+                "with_sensors",
+                default_value="true",
+                description="false=云端：不起 Mid-360 驱动（配 with_mock_robot）",
+            ),
+            DeclareLaunchArgument(
+                "with_lio",
+                default_value="true",
+                description="false=云端：不起 Super-LIO（配 with_mock_robot）",
+            ),
+            DeclareLaunchArgument(
+                "with_mock_robot",
+                default_value="false",
+                description="虚拟设备内核 vkernel_sim：合成 /lio/cloud_world + /lio/robo/odom",
+            ),
+            DeclareLaunchArgument(
+                "with_thin_harness",
+                default_value="false",
+                description="目标架构任务意图入口 thin_harness（:9879/:9880）",
+            ),
+            DeclareLaunchArgument(
                 "with_foxglove",
                 default_value="false",
                 description="Foxglove bridge（Step 1 lean 默认关）",
@@ -546,12 +610,17 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "with_glass_aware",
                 default_value="true",
-                description="启用 glass_suspect_layer + BT GlassAwareRecovery + 虚拟障碍并入 SCAN",
+                description="启用 glass_suspect_layer + 虚拟障碍并入 SCAN（仅类别无关几何障碍，BT 无玻璃专用恢复分支）",
             ),
             DeclareLaunchArgument(
                 "with_edge_uplink",
                 default_value="false",
                 description="启用 v1 边侧链路：子图:9877 + RGB:9878 + directive listen:9879",
+            ),
+            DeclareLaunchArgument(
+                "extra_params_file",
+                default_value="",
+                description="追加到 SCAN/controller/forwarder/BT 的覆盖参数文件（云端用 demo_scan_planner_cloud.yaml）",
             ),
             DeclareLaunchArgument(
                 "with_semantic_objnav",

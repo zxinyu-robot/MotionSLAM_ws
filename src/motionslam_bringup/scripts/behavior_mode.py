@@ -30,12 +30,11 @@ UPLINK_METHODS = frozenset({METHOD_PROGRESS, METHOD_EVENT})
 ALLOWED_METHODS = DOWNLINK_METHODS | UPLINK_METHODS
 
 ALLOWED_PLATFORMS = frozenset({"unitree_go2_edu", "unitree_go2"})
-ALLOWED_SKILLS = frozenset({"Navigate", "ReturnHome", "RecoverGlass", "ExploreFrontier"})
+ALLOWED_SKILLS = frozenset({"Navigate", "ReturnHome", "ExploreFrontier"})
 ALLOWED_MODE_IDS = frozenset(
     {
         "navigate_office",
         "navigate_intersection_cautious",
-        "navigate_glass_aware",
         "return_home_on_link_lost",
         "explore_frontier",
     }
@@ -51,9 +50,9 @@ ALLOWED_SCENE_TYPES = frozenset(
 ALLOWED_MODE_STATES = frozenset(
     {"INIT", "ARMED", "ACTIVE", "EXCEPTION", "TERMINATED"}
 )
-ALLOWED_RECOVERY_SKILLS = frozenset({"ReturnHome", "RecoverGlass", "none"})
+ALLOWED_RECOVERY_SKILLS = frozenset({"ReturnHome", "none"})
 ALLOWED_EXCEPTION_REASONS = frozenset(
-    {"plan_fail", "stuck", "glass_trap", "link_lost", "robot_mismatch", "unresolved_goal"}
+    {"plan_fail", "stuck", "link_lost", "robot_mismatch", "unresolved_goal"}
 )
 ALLOWED_FRAGMENT_LAYERS = frozenset(
     {
@@ -258,7 +257,7 @@ def _validate_policy(policy: dict[str, Any]) -> Optional[str]:
     if life is not None:
         if not isinstance(life, dict):
             return "REJECT_LIFECYCLE_POLICY_TYPE"
-        for key in ("on_link_lost", "on_glass_trap", "on_plan_fail"):
+        for key in ("on_link_lost", "on_plan_fail"):
             if key not in life:
                 continue
             skill = _norm(life.get(key))

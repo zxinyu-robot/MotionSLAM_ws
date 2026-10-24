@@ -1,0 +1,21 @@
+# vkernel_sim：云端虚拟设备房间（world 系，单位 m）
+# 外墙围出 [-1.5, 3.5] x [-1.5, 3.5]；中央一根立柱做障碍（离 demo 环路 ≥0.6m，
+# 大于 PCT inflate 0.35，不阻塞子目标）
+# ROS 参数不支持嵌套数组：walls = [x1,y1,x2,y2, ...]，pillars = [cx,cy,r, ...]
+vkernel_sim:
+  ros__parameters:
+    odom_rate_hz: 50.0
+    cloud_rate_hz: 5.0
+    cmd_timeout_s: 0.6
+    start_x: 0.0
+    start_y: 0.0
+    start_yaw: 0.0
+    start_z: 0.0
+    wall_z_min: 0.30
+    wall_z_max: 1.20
+    sample_step_m: 0.05
+    walls: [-1.5, -1.5, 3.5, -1.5,
+            3.5, -1.5, 3.5, 3.5,
+            3.5, 3.5, -1.5, 3.5,
+            -1.5, 3.5, -1.5, -1.5]
+    pillars: [1.2, 1.2, 0.20]

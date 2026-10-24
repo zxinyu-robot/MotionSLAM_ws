@@ -50,7 +50,7 @@ def _execute_envelope(now: int | None = None) -> dict:
                 "domain": "legged",
                 "type": "go2",
                 "thing_version": "1.0.0",
-                "capability_tags": ["Navigate", "ReturnHome", "RecoverGlass"],
+                "capability_tags": ["Navigate", "ReturnHome"],
             },
             "properties": {
                 "scene_type": "intersection",
@@ -82,7 +82,6 @@ def _execute_envelope(now: int | None = None) -> dict:
                 "policy_ref": "policydb://scene/intersection/cautious",
                 "lifecycle_policy": {
                     "on_link_lost": "ReturnHome",
-                    "on_glass_trap": "RecoverGlass",
                 },
                 "adaptation_rationale": "路口狭窄且右侧有玻璃",
             },
@@ -154,7 +153,7 @@ def test_reject_forbidden_cmd_vel():
 
 def test_reject_events_on_downlink():
     raw = _execute_envelope()
-    raw["data"]["events"] = [{"event": "mode_exception", "reason": "glass_trap"}]
+    raw["data"]["events"] = [{"event": "mode_exception", "reason": "plan_fail"}]
     res = validate_thing_envelope(raw, _ctx())
     assert not res.ok
     assert res.reason == "REJECT_EVENTS_ON_SERVICE"
@@ -198,7 +197,7 @@ def test_accept_progress_exception_with_fragments():
     raw["data"]["properties"]["mode_state"] = "EXCEPTION"
     raw["data"].pop("services", None)
     raw["data"]["events"] = [
-        {"event": "mode_exception", "reason": "glass_trap", "need_reply": 1}
+        {"event": "mode_exception", "reason": "plan_fail", "need_reply": 1}
     ]
     raw["data"]["world_fragments"] = [
         {

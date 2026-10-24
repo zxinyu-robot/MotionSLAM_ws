@@ -91,7 +91,6 @@ def reverse_xy_for_scan(
 def should_return_home(
     *,
     explicit: bool = False,
-    glass_trap: bool = False,
     link_lost: bool = False,
     already_returning: bool = False,
     trail_len: int = 0,
@@ -101,8 +100,6 @@ def should_return_home(
         return None
     if explicit:
         return "explicit"
-    if glass_trap:
-        return "glass_trap"
     if link_lost:
         return "link_lost"
     return None

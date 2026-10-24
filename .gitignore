@@ -44,3 +44,10 @@ frames_*.pdf
 
 # export 文件夹
 export/
+# 云端 bootstrap 拉取的第三方工作区与克隆（按 THIRD_PARTY.md 手工克隆，不入库）
+scan_planner_ws/
+src/unitree_ros2/
+src/Super-LIO/
+src/livox_ros_driver2/
+src/PCT_planner/
+src/SCAN-Planner/

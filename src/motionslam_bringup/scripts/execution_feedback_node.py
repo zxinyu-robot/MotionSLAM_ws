@@ -33,7 +33,6 @@ FEEDBACK_EVENTS = frozenset(
         "plan_fail_hold",
         "plan_fail_recovery_done",
         "pgo_applied_redispatch",
-        "glass_trap",
         "return_home_started",
         "return_home_done",
         "request_assist",
@@ -227,7 +226,7 @@ class ExecutionFeedbackNode(Node):
         safety = "OK"
         accepted = True
         reason = ""
-        if event in ("plan_fail_hold", "glass_trap", "request_assist"):
+        if event in ("plan_fail_hold", "request_assist"):
             safety = "DEGRADED"
             reason = event
         elif event == "task_rejected":
