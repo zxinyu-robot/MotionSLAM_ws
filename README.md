@@ -1,26 +1,24 @@
 # MotionSLAM_ws
 
 ### 项目概述
-MotionSLAM_ws 是一个基于 ROS 2 Humble 构建的工作空间，专为搭载 Livox Mid-360 激光雷达的 Unitree Go2 四足机器人提供跨楼层自主导航能力而设计。
+MotionSLAM_ws 是一个基于 ROS 2 Humble 构建的工作空间，专为搭载 Livox Mid-360 激光雷达的 Unitree Go2 四足机器人提供跨楼层自主导航能力而设计。任务编排、空间状态运行时与控制指令适配等核心链路均为自研实现。
 
-### 核心特性
+### 闭环演示
+![云端跨楼层闭环演示](docs/media/cross_floor_demo.webp)
+
+[完整视频 mp4](docs/media/cross_floor_demo.mp4)
+
+### 核心特性（自研能力）
 该工作空间实现了一套稳健且具备容错能力的自主导航技术栈，核心功能涵盖：
 - 度量级定位（Metric Localization）
 - 全局与局部规划（Global & Local Planning）
 - 行为树任务编排（Behavior Tree Orchestration）
 - 底层运动控制（Low-level Sport Control）
 
-### 核心运行流程
-系统的核心运行流程串联了多个关键模块，形成完整的感知-规划-执行闭环：
-1. 状态估计：使用 Super-LIO 进行高精度位姿估计。
-2. 全局指引：PCT 模块提供全局路径指引。
-3. 任务执行：行为树（BT）负责任务调度与执行。
-4. 局部规划：SCAN 模块负责局部连续路径规划。
-5. 指令适配：通过转发器（Forwarders）适配控制指令。
-6. 硬件驱动：最终调用 Unitree Sport APIs 驱动硬件执行。
+其中，行为树编排（`motionslam_bringup`）、任务运行时（`task_runtime`）与转发器（Forwarders）为全自研实现；定位与全局/局部规划在开源组件（Super-LIO / PCT / SCAN）基础上做工程化集成。
 
 ### 系统架构亮点
-在底层硬件集成之上，该系统创新性地叠加了一个"三空间模型"（Three-space Model）。该模型用于规范数据在度量空间（Metric）、符号空间（Symbolic）以及世界空间（World）三个维度间的流转，从而提升系统的结构化感知与决策能力。
+在底层硬件集成之上，该系统自研的"三空间模型"（Three-space Model）用于规范数据在度量空间（Metric）、符号空间（Symbolic）以及世界空间（World）三个维度间的流转，从而提升系统的结构化感知与决策能力。
 
 ## 贡献
 
@@ -33,6 +31,17 @@ MotionSLAM_ws 是一个基于 ROS 2 Humble 构建的工作空间，专为搭载 
 ## 真机部署规范
 
 环境：Jetson Orin NX + Unitree Go2 + Livox Mid-360，ROS 2 Humble（Docker，host 网络直通狗域 0）。
+
+### 核心运行流程
+系统的核心运行流程串联了多个关键模块，形成完整的感知-规划-执行闭环：
+1. 状态估计：使用 Super-LIO 进行高精度位姿估计。
+2. 全局指引：PCT 模块提供全局路径指引。
+3. 任务执行：行为树（BT）负责任务调度与执行。
+4. 局部规划：SCAN 模块负责局部连续路径规划。
+5. 指令适配：通过转发器（Forwarders）适配控制指令。
+6. 硬件驱动：最终调用 Unitree Sport APIs 驱动硬件执行。
+
+以下部署步骤即完成上述链路的构建与启动：
 
 ```bash
 # 1. 拉代码与第三方依赖（按 THIRD_PARTY.md 的 pin）
@@ -60,12 +69,6 @@ cp MID360_config.example.json MID360_config.json
 - **参数基线**：真机以 `config/demo_scan_planner.yaml` 为准；云端 overlay `demo_scan_planner_cloud.yaml` 放宽了动力学与障碍 z 过滤（`obstacle_height_max` 1.5→3.0），**不得回灌真机**
 - **跨楼层**：真机 `obstacle_height_max=1.50` 相对地面会滤掉楼上墙体，跨楼层部署前需改相对机器人/分层地图
 - **透明障碍**：仅保留类别无关 `virtual_obstacle_merge` 管道，玻璃专用策略已按规划文档移除
-
-## 闭环演示
-
-![云端跨楼层闭环演示](docs/media/cross_floor_demo.webp)
-
-[完整视频 mp4](docs/media/cross_floor_demo.mp4)
 
 ## 参考工作
 
