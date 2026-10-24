@@ -1,6 +1,6 @@
 # MotionSLAM_ws
 
-Unitree Go2 + Mid-360 端侧自主导航（ROS 2 Humble）：解决**足式机器人在多楼层结构化场景下的自主定位与导航**。链路：Super-LIO 定位 → PCT 全局规划 → BT 任务编排 → SCAN 局部规划 → forwarder → Sport 运动执行。
+Unitree Go2 + Mid-360 端侧**跨楼层自主探索导航**（ROS 2 Humble）：面向工程落地的四足机器人自主定位、探索与导航，带故障恢复机制。链路：Super-LIO 定位 → PCT 全局规划 → BT 任务编排 → SCAN 局部规划 → forwarder → Sport 运动执行；核心规划/执行/运行时均为 C++ 实现。
 
 ## 贡献
 
