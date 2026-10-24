@@ -1,54 +1,64 @@
 # MotionSLAM 未完成工作梳理
 
-> 分支 `roadmap`。按"必须上真机验证 / 目标架构推进 / 工程质量 / 云端仿真增强"
+> 分支 `roadmap`。按"上真机 / 目标架构推进 / 工程质量 / 云端仿真增强"
 > 四组梳理，标注依赖与建议优先级（P0 阻塞项 → P2 可延后）。
 
-## A. 真机验证 backlog（P0，云端结论都需真机复核）
+## A. 上真机（真机部署阶段事项，云端结论都需真机复核）
 
-- [ ] **边端闭环**：edge uplink / 边端协同链路未在真机验证（云端 `with_edge_uplink:=false`）
-- [ ] **返航 return_home**：玻璃 trap 已移除并改名 `slow_mode`，真机返航未复测
-- [ ] **动态障碍**：virtual_obstacle_merge 管道保留，动态/行人场景未验收
-- [ ] **长时耐久**：目前只验证过 1m 短程（偏差 0.43m）与云端多楼层仿真
+- [ ] **边端闭环**：edge uplink / 边端协同链路真机验证（云端 `WITH_EDGE=1`
+  已可跑，真机未验）
+- [ ] **返航 return_home**：玻璃 trap 已移除并改名 `slow_mode`，真机返航复测
+- [ ] **动态障碍**：virtual_obstacle_merge 管道保留，动态/行人场景验收
+- [ ] **长时耐久**：目前只有 1m 短程（偏差 0.43m）与云端多楼层仿真
 - [ ] **跨楼层高度过滤**：真机 `obstacle_height_max=1.50`（相对地面）会滤掉
   楼上墙体——需改成相对机器人或分层地图后才可部署跨楼层任务
 - [ ] **SCAN pin 修复**：`d62de08` 是 Jetson 本地提交不在上游，需推到
-  `wuyi2121/SCAN-Planner` 或更新 THIRD_PARTY.md，否则换机不可复现
+  `wuyi2121/SCAN-Planner` 或更新 THIRD_PARTY.md（gitlink 当前指到
+  ros2-community 分支头 d0b921c，真机 pin 推上游后再换）
 - [ ] **minSnapTraj 共线奇异复测**：云端已修（`decimate_collinear_xy` +
   前导点丢弃），真机复现同类现象需确认修复效果
 
 ## B. 目标架构（空间状态→任务意图→安全动作→新状态）
 
-- [ ] **task_runtime 接管编排**：目前是脚手架 + Thin Harness 意图入口已验证
-  （intent → task_terminal），BT 的 1832 行单文件状态机应逐步迁到
-  task_runtime 的生命周期模型，BT 退化为"导航技能"之一
-- [ ] **符号空间正式化**：任务意图 schema、生命周期状态机、异常回退路径
-  需要落到 task_runtime + Thin Harness 契约文档
-- [ ] **motionslam_ipc 共享内存点云**：无任何调用方，Super-LIO 写入改动
-  不在 patches——要么补全要么删除，先决策
-- [ ] **三空间边界守护**：世界空间只提交意图、度量空间独占实时执行的
-  约束目前靠约定，需在接口层固化（意图校验已有一版 `task_intent.py`）
+- [x] **符号空间契约**：`docs/符号空间契约.md`（TaskIntent schema +
+  生命周期状态机 + 校验规则 + 事件流）
+- [x] **task_runtime Python 适配层**：`task_runtime_adapter.py` 与 C++
+  TaskRuntime 同契约，thin_harness/编排层可先行接入（7 项 pytest）
+- [x] **motionslam_ipc**：决策=移除。无任何调用方、Super-LIO 写入改动不在
+  patches；包、依赖声明、唯一消费头文件均已删
+- [ ] **task_runtime 接管编排（迁移）**：BT 的"任务"语义迁到
+  TaskRuntime 生命周期，BT 退化为 skill_sequence 中的 navigate 技能；
+  入口契约已固化，迁移本体待做
+- [ ] **三空间边界守护固化**：世界空间只提交意图、度量空间独占实时执行
+  的约束在接口层固化（意图校验已有一版，跨空间调用审计未做）
 
 ## C. 工程质量
 
-- [ ] **子模块注册**：`.gitmodules` 列了 5 个组件但无 gitlink，
-  `git submodule update --init` 拉不到东西——注册 gitlink 或改纯文档流程
-- [ ] **CI**：task_runtime CTest + bringup pytest（除 test_semantic_mission.py）
-  在普通 Ubuntu 即可跑，接 GitHub Actions 最小 CI
-- [ ] **死代码清理**：4 个无调用方的头文件 + `TrajTracker`（仅单测引用）
-- [ ] **BT 状态机拆分**：`demo_scan_bt_orchestrator.py` 单文件状态机过大
-- [ ] **Dockerfile.cloud 补 ffmpeg/matplotlib**：云端渲染依赖目前是手工装的
+- [x] **子模块注册**：5 个 gitlink 已注册（Super-LIO/livox_ros_driver2/
+  unitree_ros2/PCT-Planner/SCAN-Planner），`git submodule update --init` 可用
+- [x] **CI**：`.github/workflows/ci.yml`——task_runtime ctest +
+  bringup pytest（排除依赖 ROS 的 test_semantic_mission.py）
+- [x] **死代码清理**：NavigationBtConditions/SharedMapBuffer/
+  ShmCloudObstacleLayerCore/WaypointFsmCore 4 个头文件 + TrajTracker
+  （头+测试）已删
+- [x] **BT 状态机拆分（第一步）**：`demo_scan_bt_core.py` 抽出枚举/
+  SyncParameterClient/Subgoal/MissionState/load_waypoints，编排器 1681→1529 行；
+  剩余 ~1448 行节点类的状态机分段（execute/return_home/recovery）待继续拆
+- [x] **Dockerfile.cloud 补 ffmpeg/matplotlib/fonts-noto-cjk**
 
 ## D. 云端仿真增强
 
 - [x] vkernel 多楼层高度场 + 跨楼层闭环（11/11 mission_succeeded）
 - [x] 双视口渲染（实时点云 + 真实 occupancy_inflate + 轨迹带）
-- [ ] **占据图滑动窗口对齐**：渲染侧目前按 first-seen 永久累积体素，
-  真机 occupancy 是滑动窗口（会遗忘），视频语义可再对齐
+- [x] **占据图滑动窗口**：渲染器 `--occ-window <秒>`，体素按 last_seen
+  遗忘，对齐在线占据图语义（0=累积，保持现有视频行为）
+- [x] **边端链路云端化**：`WITH_EDGE=1 scripts/dev/cloud_sim_multifloor.sh`
+  自动起 mock 接收端 + `with_edge_uplink:=true edge_host:=127.0.0.1`
 - [ ] **多楼层真机参数回放**：把真机 bag 灌进 vkernel 回放验证一致性
-- [ ] **边端链路云端化**：edge uplink 在云端也跑起来（当前关掉）
+  （缺真机 bag 素材，阻塞）
 
 ## 待决策项
 
 1. PR #6（dev→main）合并——需人工批准
-2. motionslam_ipc 补全还是删除
+2. ~~motionslam_ipc 补全还是删除~~ → 已定：删除（见 B）
 3. SCAN `obstacle_height_*` 是否改成相对机器人（影响真机参数基线）

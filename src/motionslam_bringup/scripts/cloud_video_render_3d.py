@@ -182,27 +182,30 @@ def _accumulate_occ(occ_rows, upto_t):
     return np.array(list(vox.values()), dtype=np.float32)
 
 
-def _occ_prefix(occ_rows, idxs_t, vox=0.05):
+def _occ_prefix(occ_rows, idxs_t, vox=0.05, window=None):
     """预计算每个帧时刻的占据快照。
 
-    体素点量可达千万级：不用 python dict，栅格化成 first_seen
-    时间数组（一格=一个体素，存最早出现时刻），每帧取 <=t 的格子。"""
+    体素点量可达千万级：不用 python dict，栅格化成 last_seen
+    时间数组（一格=一个体素，存最后出现时刻）。window=None 时
+    取 <=t 的全部体素（累积）；window=秒数时只保留
+    [t-window, t] 内还看见的体素，对齐在线占据图的遗忘语义。"""
     if not occ_rows:
         return [None] * len(idxs_t)
     all_pts = np.concatenate([p.reshape(-1, 3) for _, p in occ_rows if len(p)])
     mins = all_pts.min(axis=0).ravel()
     dims = ((all_pts.max(axis=0) - mins) / vox).astype(np.int64) + 2
     W, H, D = int(dims[0]), int(dims[1]), int(dims[2])
-    first_t = np.full(W * H * D, np.inf, dtype=np.float64)
+    last_t = np.full(W * H * D, -np.inf, dtype=np.float64)
     for t, p in sorted(occ_rows, key=lambda r: r[0]):
         if not len(p):
             continue
         idx = ((p.reshape(-1, 3) - mins) / vox).astype(np.int64)
         flat = (idx[:, 0] * H + idx[:, 1]) * D + idx[:, 2]
-        first_t[flat] = np.minimum(first_t[flat], t)
+        last_t[flat] = np.maximum(last_t[flat], t)
     snaps = []
     for t in idxs_t:
-        sel = np.nonzero(first_t <= t)[0]
+        lo = -np.inf if window is None else t - window
+        sel = np.nonzero((last_t <= t) & (last_t >= lo))[0]
         if not len(sel):
             snaps.append(None)
             continue
@@ -214,7 +217,8 @@ def _occ_prefix(occ_rows, idxs_t, vox=0.05):
     return snaps
 
 
-def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15):
+def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15,
+                occ_window=None):
     """双视口：左=实时点云，右=在线体素占据 + 轨迹带 + 航点球。"""
     import matplotlib
 
@@ -226,7 +230,8 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15):
     n = len(traj)
     step = max(1, math.ceil(n / (fps * 75)))
     idxs = list(range(0, n, step))
-    occ_snaps = _occ_prefix(occ_rows, [traj[i][0] for i in idxs], vox=0.08)
+    occ_snaps = _occ_prefix(occ_rows, [traj[i][0] for i in idxs], vox=0.08,
+                            window=occ_window)
 
     xs = [p[1] for p in traj]
     ys = [p[2] for p in traj]
@@ -486,6 +491,8 @@ def main():
     ap.add_argument("--map-yaml", default="", help="vkernel 参数 yaml（生成地表点云面）")
     ap.add_argument("--save-npz", default="", help="录制数据保存路径，便于离线反复渲染")
     ap.add_argument("--load-npz", default="", help="从 npz 直接渲染，不再订阅 ROS")
+    ap.add_argument("--occ-window", type=float, default=0.0,
+                    help="占据体素滑动窗口秒数（0=累积不遗忘，对齐在线占据图用 8~15）")
     args = ap.parse_args()
 
     surface = None
@@ -509,7 +516,8 @@ def main():
                     (float(t_val), occ_pts[ptr : ptr + n2].reshape(-1, 3)))
                 ptr += n2
         if args.style == "dual":
-            render_dual(traj, cloud, occ_rows, surface, wpts, args.out, fps=args.fps)
+            render_dual(traj, cloud, occ_rows, surface, wpts, args.out, fps=args.fps,
+                    occ_window=args.occ_window or None)
         else:
             render(traj, cloud, args.out, fps=args.fps, surface=surface)
         print(f"WROTE {args.out}")
@@ -547,7 +555,7 @@ def main():
                  occ_t=occ_t, occ_n=occ_n, occ_pts=occ_pts)
     if args.style == "dual":
         render_dual(node.traj, node.cloud, node.occ_rows, surface, wpts,
-                    args.out, fps=args.fps)
+                    args.out, fps=args.fps, occ_window=args.occ_window or None)
     else:
         render(node.traj, node.cloud, args.out, fps=args.fps, surface=surface)
     print(f"WROTE {args.out}")
