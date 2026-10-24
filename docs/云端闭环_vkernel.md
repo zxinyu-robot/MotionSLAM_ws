@@ -59,17 +59,23 @@ docker exec motionslam-cloud python3 /ws/src/motionslam_bringup/scripts/task_int
 ```bash
 docker exec -d motionslam-cloud bash -lc \
   "bash /ws/scripts/dev/cloud_sim_multifloor.sh > /ws/.sim_mf.log 2>&1"
-# 录像（mission_succeeded 后自动渲染 mp4）
+# 录像（订阅点云+里程计+体素占据，mission_succeeded 后自动渲染 mp4，
+# 并存 npz 供离线反复渲染）
 docker exec -d motionslam-cloud bash -lc \
   "source /ws/scripts/dev/source_cloud_env.sh && \
    python3 /ws/src/motionslam_bringup/scripts/cloud_video_render_3d.py \
-     --out /ws/cross_floor_3d.mp4 --timeout 480"
+     --out /ws/cross_floor_3d.mp4 --save-npz /ws/cross_floor.npz --timeout 480"
 ```
 
-成果视频：`docs/media/cross_floor_demo.mp4`（3D 点云渲染版，Foxglove 风格
-高度着色 + 环绕相机；由 `scripts/cloud_video_render_3d.py` 订阅
-`/lio/cloud_world` + `/lio/robo/odom` 录制，PCT→BT→SCAN→forwarder
-全链路真闭环）。另有 `scripts/cloud_video_render.py`（2D 俯视+侧视图）。
+成果视频：`docs/media/cross_floor_demo.mp4`（双视口渲染版：
+左 = 实时点云 `/lio/cloud_world` + 高度场地表点云，Foxglove 风格
+高度着色；右 = 在线体素占据 `/grid_map/occupancy_inflate` 实录
+（方块体素、按占据高度彩虹着色）+ 紫色轨迹带 + 白色航点球。
+由 `scripts/cloud_video_render_3d.py --style dual` 订阅
+`/lio/cloud_world` + `/lio/robo/odom` + `/grid_map/occupancy_inflate`
+录制，PCT→BT→SCAN→forwarder 全链路真闭环；
+`--save-npz/--load-npz` 支持录制一次后离线反复调渲染风格）。
+另有 `scripts/cloud_video_render.py`（2D 俯视+侧视图）。
 
 注意事项：
 - PCT 是 0.2m 栅格 + 0.35m Chebyshev 膨胀：门洞净宽需 ≥1.2m，
