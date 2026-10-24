@@ -147,6 +147,23 @@ void test_late_report_does_not_revive() {
   assert(reg2.liveness("m", 501) == PluginLiveness::kStale);
 }
 
+void test_enumeration_follows_registration_order() {
+  PluginRegistry reg;
+  auto z = make_plugin("z-camera", PluginKind::kSource,
+                       PluginAuthority::kEvidence);
+  z.provides = {"pose"};
+  auto a = make_plugin("a-camera", PluginKind::kSource,
+                       PluginAuthority::kEvidence);
+  a.provides = {"pose"};
+  assert(reg.add(z) == RegisterResult::kRegistered);
+  assert(reg.add(a) == RegisterResult::kRegistered);
+  // registration order, not id sort
+  assert(reg.providers("pose").front()->plugin_id == "z-camera");
+  assert(reg.plugins().front()->plugin_id == "z-camera");
+  assert(reg.remove("z-camera"));
+  assert(reg.providers("pose").front()->plugin_id == "a-camera");
+}
+
 }  // namespace
 
 int main() {
@@ -157,5 +174,6 @@ int main() {
   test_liveness();
   test_descriptor_pointer_stable_across_add();
   test_late_report_does_not_revive();
+  test_enumeration_follows_registration_order();
   return 0;
 }

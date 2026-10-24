@@ -27,6 +27,7 @@ RegisterResult PluginRegistry::add(PluginDescriptor descriptor) {
   }
   const auto id = descriptor.plugin_id;
   plugins_.emplace(id, std::move(descriptor));
+  order_.push_back(id);
   return RegisterResult::kRegistered;
 }
 
@@ -38,6 +39,8 @@ bool PluginRegistry::remove(const std::string& plugin_id) {
 
   plugins_.erase(it);
   health_.erase(plugin_id);
+  order_.erase(std::remove(order_.begin(), order_.end(), plugin_id),
+               order_.end());
 
   provided_.clear();
   for (const auto& [id, d] : plugins_) {
@@ -57,7 +60,8 @@ const PluginDescriptor* PluginRegistry::find(
 std::vector<const PluginDescriptor*> PluginRegistry::providers(
     const std::string& capability) const {
   std::vector<const PluginDescriptor*> out;
-  for (const auto& [id, d] : plugins_) {
+  for (const auto& id : order_) {
+    const auto& d = plugins_.at(id);
     if (std::find(d.provides.begin(), d.provides.end(), capability) !=
         d.provides.end()) {
       out.push_back(&d);
@@ -69,8 +73,8 @@ std::vector<const PluginDescriptor*> PluginRegistry::providers(
 std::vector<const PluginDescriptor*> PluginRegistry::plugins() const {
   std::vector<const PluginDescriptor*> out;
   out.reserve(plugins_.size());
-  for (const auto& [id, d] : plugins_) {
-    out.push_back(&d);
+  for (const auto& id : order_) {
+    out.push_back(&plugins_.at(id));
   }
   return out;
 }

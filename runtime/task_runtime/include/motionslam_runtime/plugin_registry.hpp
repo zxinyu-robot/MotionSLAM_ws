@@ -71,6 +71,7 @@ class PluginRegistry final {
   bool remove(const std::string& plugin_id);
 
   const PluginDescriptor* find(const std::string& plugin_id) const;
+  // providers() and plugins() enumerate in registration order.
   std::vector<const PluginDescriptor*> providers(
       const std::string& capability) const;
   std::vector<const PluginDescriptor*> plugins() const;
@@ -91,6 +92,7 @@ class PluginRegistry final {
   static bool is_valid(const PluginDescriptor& descriptor) noexcept;
 
   std::map<std::string, PluginDescriptor> plugins_;
+  std::vector<std::string> order_;  // registration order for enumeration
   std::set<std::string> provided_;
   std::map<std::string, PluginHealth> health_;
 };
