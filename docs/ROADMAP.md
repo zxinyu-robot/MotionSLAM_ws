@@ -52,10 +52,17 @@
 - [ ] **三空间边界守护固化**：世界空间只提交意图、度量空间独占实时执行
   的约束在接口层固化（意图校验已有一版，跨空间调用审计未做）
 
-- [ ] **P0 跨空间数据契约落地**（见 `docs/符号空间契约.md`「跨空间数据契约」）：
-  GoalRequest（容差/超时/坐标系）、PCT/SCAN `PlanResult` 显式失败码、
-  closed_loop `ExecStatus` 结构化执行反馈、`task_id→plan_id→traj_id` 版本链，
-  到达判定加速度稳定条件——C++ 侧实现（task_runtime + motionslam_pipeline）
+- [ ] **状态契约 + BT 控制逻辑**（五层边界见 `docs/符号空间契约.md`；图/文档已定，
+  代码按下列优先级在 C++ 侧落地：task_runtime + motionslam_pipeline）
+  - P0 状态反馈与执行结果反馈分离：状态层 → BT 黑板；控制层 ExecStatus → BT，
+    BT 不得把状态更新当成任务成功
+  - P0 速度指令与设备接口分离：控制层只出 vx/vy/ωz，限幅/看门狗/StopMove 归设备层
+  - P0 全局路径 → 局部参考接口契约：`/initial_path` 携带 frame、plan_id、subgoal_idx
+  - P1 中间子目标循环、终止条件、失败恢复（到达判定加速度稳定条件）
+  - P1 PCT 可通行性表示（tomogram：坡度/台阶高度差/垂直障碍/足迹）显式化
+  - P1 统一 frame_id / stamp / 轨迹有效期，`task_id→plan_id→traj_id` 版本链
+  - P2 PlanResult / ExecStatus 字段落地（GoalRequest、failure_code、
+    tracking_error、trajectory_valid），便于诊断与测试
 
 ## C. 工程质量
 
