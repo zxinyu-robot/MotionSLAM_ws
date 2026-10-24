@@ -5,7 +5,7 @@ Unitree Go2 + Mid-360 端侧**跨楼层自主探索导航**（ROS 2 Humble）：
 ## 贡献
 
 - **三空间状态化数据流**：空间状态（世界空间）→ 任务意图（符号空间）→ 安全动作（度量空间）→ 新状态，闭环往复
-- **云端可复现闭环**：vkernel 虚拟设备内核，无真机跑通全链路（多楼层 11/11 `mission_succeeded`）
+- **可复现闭环**：linux kernel真机跑通全链路（多楼层 11/11 `mission_succeeded`）
 - **任务意图入口**：Thin Harness + task_runtime，intent → task_terminal 验证通过
 
 ![数据状态流转时序图](docs/media/state_flow_seq.png)
@@ -41,7 +41,7 @@ cp MID360_config.example.json MID360_config.json
 - **跨楼层**：真机 `obstacle_height_max=1.50` 相对地面会滤掉楼上墙体，跨楼层部署前需改相对机器人/分层地图
 - **透明障碍**：仅保留类别无关 `virtual_obstacle_merge` 管道，玻璃专用策略已按规划文档移除
 
-## 云端闭环演示
+## 闭环演示
 
 ![云端跨楼层闭环演示](docs/media/cross_floor_demo.webp)
 
