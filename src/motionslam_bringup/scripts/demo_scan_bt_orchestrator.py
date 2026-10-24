@@ -41,6 +41,7 @@ from plan_fail_recovery import (  # noqa: E402
     yaw_delta,
 )
 from return_home import (  # noqa: E402
+    decimate_collinear_xy,
     densify_xy,
     record_breadcrumb,
     reverse_xy_for_scan,
@@ -1064,7 +1065,12 @@ class DemoScanBtOrchestrator(Node):
                 raw.append((float(xy[0]), float(xy[1])))
         for ps in msg.poses:
             raw.append((float(ps.pose.position.x), float(ps.pose.position.y)))
-        return self._xy_to_path(densify_xy(raw, step_m=0.20), tag="pct")
+        dense = decimate_collinear_xy(densify_xy(raw, step_m=0.20))
+        if xy is not None:
+            # 丢弃贴近机器人位姿的前导点：否则 SCAN 轨迹首段零长，minSnap 拟合奇异
+            while len(dense) > 1 and math.hypot(dense[0][0] - xy[0], dense[0][1] - xy[1]) < 0.04:
+                dense.pop(0)
+        return self._xy_to_path(dense, tag="pct")
 
     @staticmethod
     def _stamp_ns(stamp: TimeMsg) -> int:
@@ -1109,7 +1115,9 @@ class DemoScanBtOrchestrator(Node):
     ) -> None:
         if self._pct_initial_path_pub is None or len(xy_list) < 2:
             return
-        path = self._xy_to_path(densify_xy(xy_list, step_m=0.20), tag=tag)
+        path = self._xy_to_path(
+            decimate_collinear_xy(densify_xy(xy_list, step_m=0.20)), tag=tag
+        )
         self._pct_ref_path = path
         self._pct_initial_path_pub.publish(path)
 

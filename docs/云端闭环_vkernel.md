@@ -46,3 +46,39 @@ docker exec motionslam-cloud python3 /ws/src/motionslam_bringup/scripts/task_int
 - `demo_scan_planner_cloud.yaml` 放宽 SCAN `max_acc/acc_tolerance`
   （真机姿态控制有冗余，纯积分器拐角动力学更苛刻）。
 - launch 新增开关：`with_sensors/with_lio/with_mock_robot/with_thin_harness/extra_params_file`，真机默认全开、与现有行为一致。
+
+## 跨楼层仿真（vkernel 高度场）
+
+`vkernel_sim` 支持多楼层高度场：`walls` 每面墙带基准层高 `z0`（5 元组），
+`floors=[x1,y1,x2,y2,z]` 平台、`ramps=[x1,y1,x2,y2,z1,z2,axis]` 坡道线性插值，
+`odom.z = height_at(x,y)`。示例地图 `config/vkernel_multifloor.yaml`：
+一楼房间 [0,4]²（东墙门洞 y∈[0.6,2.0]）→ 开敞坡道 x∈[4,7] 升 0→1.0 →
+二楼平台 [7,11]×[0,4]（墙 z0=1.0）。航点：
+`config/demo_scan_waypoints_multifloor.yaml`（一楼→爬坡→二楼绕圈→原路返回，11 个子目标）。
+
+```bash
+docker exec -d motionslam-cloud bash -lc \
+  "bash /ws/scripts/dev/cloud_sim_multifloor.sh > /ws/.sim_mf.log 2>&1"
+# 录像（mission_succeeded 后自动渲染 mp4）
+docker exec -d motionslam-cloud bash -lc \
+  "source /ws/scripts/dev/source_cloud_env.sh && \
+   python3 /ws/src/motionslam_bringup/scripts/cloud_video_render.py \
+     --map-yaml /ws/src/motionslam_bringup/config/vkernel_multifloor.yaml \
+     --out /ws/cross_floor_demo.mp4 --timeout 480"
+```
+
+成果视频：`docs/media/cross_floor_demo.mp4`
+（俯视轨迹 + 侧视 x-z 爬升，PCT→BT→SCAN→forwarder 全链路真闭环）。
+
+注意事项：
+- PCT 是 0.2m 栅格 + 0.35m Chebyshev 膨胀：门洞净宽需 ≥1.2m，
+  航点尽量放栅格中心（`k*0.2+0.1`），且 `max_goal_snap_m` 仅 0.15，
+  目标落在膨胀格会被静默拒绝（`poses=0`）。
+- SCAN 全局轨迹是 `PolynomialTraj::minSnapTraj`：**一串共线等距点会让拟合
+  数值奇异**（系数爆到 1e11，`getPosition` 返回天文坐标 → 全判 out-of-map →
+  局部目标塌回起点，`Close to goal` 死循环）。编排层已用
+  `decimate_collinear_xy` 把直线段抽稀成首尾两点（走稳定的单段轨迹），
+  并丢弃贴近 odom 的前导点（避免零长首段）。真机若复现同类现象同理处理。
+- SCAN 障碍 z 过滤是相对地面 `ground_height=-0.45` 的绝对窗口
+  [-0.13, 1.05]：二楼墙体（z≥1.3）对 SCAN 不可见，PCT 仍可见——
+  跨楼层真机需要把高度过滤改成相对机器人/分层地图。

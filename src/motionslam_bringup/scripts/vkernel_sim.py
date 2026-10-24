@@ -31,13 +31,39 @@ except Exception:  # pragma: no cover - unitree 消息缺失时跳过虚拟 Spor
     SportRequest = None
 
 
-def _walls_from_params(raw) -> list[tuple[float, float, float, float]]:
-    # ROS 参数不支持嵌套数组：walls 为扁平 [x1,y1,x2,y2, ...]
+def _walls_from_params(raw) -> list[tuple[float, ...]]:
+    # ROS 参数不支持嵌套数组：walls 为扁平 [x1,y1,x2,y2,z0, ...]
+    # 兼容旧 4 元组（z0=0）：长度被 5 整除按 5 元组，否则按 4 元组
     flat = [float(v) for v in (raw or [])]
+    stride = 5 if len(flat) % 5 == 0 else 4
     walls = []
-    for i in range(0, len(flat) - 3, 4):
-        walls.append(tuple(flat[i : i + 4]))
+    for i in range(0, len(flat) - stride + 1, stride):
+        item = tuple(flat[i : i + stride])
+        walls.append(item if stride == 5 else (*item, 0.0))
     return walls
+
+
+def _zones_from_params(raw, stride: int) -> list[tuple[float, ...]]:
+    flat = [float(v) for v in (raw or [])]
+    return [tuple(flat[i : i + stride]) for i in range(0, len(flat) - stride + 1, stride)]
+
+
+def _height_at(
+    x: float,
+    y: float,
+    ramps: list[tuple[float, ...]],
+    floors: list[tuple[float, ...]],
+) -> float:
+    """地形高度：ramps=[x1,y1,x2,y2,z1,z2,axis]（axis 0=沿x, 1=沿y），
+    floors=[x1,y1,x2,y2,z]。先匹配 ramp，再匹配 floor，否则 0。"""
+    for x1, y1, x2, y2, z1, z2, axis in ramps:
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            t = (x - x1) / max(1e-6, x2 - x1) if axis < 0.5 else (y - y1) / max(1e-6, y2 - y1)
+            return z1 + (z2 - z1) * min(1.0, max(0.0, t))
+    for x1, y1, x2, y2, z in floors:
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            return z
+    return 0.0
 
 
 def _pillars_from_params(raw) -> list[tuple[float, float, float]]:
@@ -50,26 +76,26 @@ def _pillars_from_params(raw) -> list[tuple[float, float, float]]:
 
 
 def build_room_cloud(
-    walls: list[tuple[float, float, float, float]],
+    walls: list[tuple[float, ...]],
     pillars: list[tuple[float, float, float]],
     *,
     z_min: float,
     z_max: float,
     step: float,
 ) -> list[tuple[float, float, float, float]]:
-    """把墙段/立柱采样成 XYZI 点列表（world 系）。"""
+    """把墙段/立柱采样成 XYZI 点列表（world 系）。墙段为 (x1,y1,x2,y2,z0)。"""
     pts: list[tuple[float, float, float, float]] = []
     nz = max(1, int(round((z_max - z_min) / 0.10)))
     z_steps = [z_min + (z_max - z_min) * i / max(1, nz - 1) for i in range(nz)]
 
-    def add_wall(x1: float, y1: float, x2: float, y2: float) -> None:
+    def add_wall(x1: float, y1: float, x2: float, y2: float, z0: float = 0.0) -> None:
         length = math.hypot(x2 - x1, y2 - y1)
         n = max(1, int(length / step))
         for i in range(n + 1):
             t = i / n
             x, y = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
             for z in z_steps:
-                pts.append((x, y, z, 40.0))
+                pts.append((x, y, z + z0, 40.0))
 
     for w in walls:
         add_wall(*w)
@@ -101,6 +127,8 @@ class VKernelSim(Node):
         self.declare_parameter("sport_request_topic", "/api/sport/request")
         self.declare_parameter("walls", [0.0])
         self.declare_parameter("pillars", [0.0])
+        self.declare_parameter("floors", [0.0])
+        self.declare_parameter("ramps", [0.0])
         self.declare_parameter("wall_z_min", 0.30)
         self.declare_parameter("wall_z_max", 1.20)
         self.declare_parameter("sample_step_m", 0.05)
@@ -155,6 +183,8 @@ class VKernelSim(Node):
 
         walls = _walls_from_params(list(self.get_parameter("walls").value))
         pillars = _pillars_from_params(list(self.get_parameter("pillars").value))
+        self._floors = _zones_from_params(list(self.get_parameter("floors").value), 5)
+        self._ramps = _zones_from_params(list(self.get_parameter("ramps").value), 7)
         self._cloud_points = build_room_cloud(
             walls,
             pillars,
@@ -207,6 +237,7 @@ class VKernelSim(Node):
         self._x += (self._vx * c - self._vy * s) * dt
         self._y += (self._vx * s + self._vy * c) * dt
         self._yaw = math.atan2(math.sin(self._yaw + self._vyaw * dt), math.cos(self._yaw + self._vyaw * dt))
+        self._z = _height_at(self._x, self._y, self._ramps, self._floors)
 
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()

@@ -149,7 +149,10 @@ def _setup(context, *args, **kwargs):
                 executable="vkernel_sim.py",
                 name="vkernel_sim",
                 output="screen",
-                parameters=[os.path.join(bringup_share, "config", "vkernel_sim.yaml")],
+                parameters=[
+                    LaunchConfiguration("vkernel_params_file").perform(context)
+                    or os.path.join(bringup_share, "config", "vkernel_sim.yaml")
+                ],
             )
         )
 
@@ -581,6 +584,11 @@ def generate_launch_description():
                 "with_mock_robot",
                 default_value="false",
                 description="虚拟设备内核 vkernel_sim：合成 /lio/cloud_world + /lio/robo/odom",
+            ),
+            DeclareLaunchArgument(
+                "vkernel_params_file",
+                default_value="",
+                description="vkernel_sim 参数文件（默认 config/vkernel_sim.yaml；多楼层用 vkernel_multifloor.yaml）",
             ),
             DeclareLaunchArgument(
                 "with_thin_harness",
