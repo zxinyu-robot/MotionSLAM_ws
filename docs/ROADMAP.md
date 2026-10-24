@@ -20,6 +20,10 @@
 
 ## B. 目标架构（空间状态→任务意图→安全动作→新状态）
 
+> 三空间约束语义：**世界空间**=空间状态（几何观测事实）；
+> **符号空间**=语义价值信息约束（任务意图/决策在此空间）；
+> **度量空间**=几何约束（安全动作边界，SCAN/执行层保证）。
+
 > 原则：项目面向工程落地，编排/运行时/恢复机制的权威实现都在 **C++**
 > （`runtime/task_runtime`、`src/motionslam_pipeline`）。Python 层
 > （demo_scan_bt_orchestrator、thin_harness、task_runtime_adapter）是
