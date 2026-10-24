@@ -302,9 +302,11 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15,
                     axL.plot([x0, x1], [gy, gy], [gz, gz], color="#1c2630", lw=0.35)
             # GLB 场景底图：静态暗色点云，压在实时数据下层
             if scene is not None and len(scene):
-                scnorm = np.clip(scene[:, 2] / zmax, 0, 1)
+                # 场景底图：密致点云 + 自身 z 范围 jet 彩虹色（参考图观感）
+                scz = scene[:, 2]
+                scnorm = np.clip((scz - scz.min()) / max(scz.max() - scz.min(), 1e-6), 0, 1)
                 axL.scatter(scene[:, 0], scene[:, 1], scene[:, 2],
-                            c=scnorm, cmap="bone", s=0.6, alpha=0.35,
+                            c=scnorm, cmap="jet", s=1.0, alpha=0.75,
                             linewidths=0, vmin=0, vmax=1)
             if surface is not None:
                 snorm = np.clip(surface[:, 2] / zmax, 0, 1)
@@ -332,7 +334,8 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15,
             occ = occ_snaps[k]
             if scene is not None and len(scene):
                 axR.scatter(scene[:, 0], scene[:, 1], scene[:, 2],
-                            c="#33404e", s=0.5, alpha=0.25, linewidths=0)
+                            c=scnorm, cmap="jet", s=0.8, alpha=0.5,
+                            linewidths=0, vmin=0, vmax=1)
             if occ is not None and len(occ):
                 # 按体素自身 z 范围归一→彩虹全谱（对齐真机占据图观感）
                 oz0, oz1 = float(occ[:, 2].min()), float(occ[:, 2].max())
@@ -353,7 +356,7 @@ def render_dual(traj, cloud, occ_rows, surface, wpts, out_path, fps=15,
                         edgecolors="#8e7cc3", linewidths=1.4)
 
             # 相机（慢速环绕，两视图同步）
-            elev = 26 + 8 * math.sin(k / max(len(idxs), 1) * math.pi)
+            elev = 14 + 8 * math.sin(k / max(len(idxs), 1) * math.pi)
             azim = -58 + (k / max(len(idxs) - 1, 1)) * 120
             axL.view_init(elev=elev, azim=azim)
             axR.view_init(elev=elev, azim=azim)
@@ -510,6 +513,10 @@ def main():
                     help="vkernel 场景 npz（GLB 采样点）做静态底图")
     ap.add_argument("--scene-z-offset", type=float, default=0.0,
                     help="底图 z 偏移（与 vkernel odom_origin_z 对齐，取负）")
+    ap.add_argument("--scene-z-max", type=float, default=float("nan"),
+                    help="底图剖切：只保留 z 低于该值的点（掀顶露室内）")
+    ap.add_argument("--scene-cut", default="",
+                    help="底图半空间剖切 cx,cy,dirx,diry,keep_side：裁掉相机近侧墙")
     ap.add_argument("--save-npz", default="", help="录制数据保存路径，便于离线反复渲染")
     ap.add_argument("--load-npz", default="", help="从 npz 直接渲染，不再订阅 ROS")
     args = ap.parse_args()
@@ -521,8 +528,14 @@ def main():
     scene = None
     if args.scene_npz:
         d0 = np.load(args.scene_npz)
-        scene = _voxel_down(d0["points"][:, :3].astype(np.float32), 0.1)
+        scene = _voxel_down(d0["points"][:, :3].astype(np.float32), 0.05)
         scene[:, 2] += float(args.scene_z_offset)
+        if not math.isnan(args.scene_z_max):
+            scene = scene[scene[:, 2] < args.scene_z_max]
+        if args.scene_cut:
+            cx, cy, dx, dy, keep = [float(v) for v in args.scene_cut.split(",")]
+            side = (scene[:, 0] - cx) * dx + (scene[:, 1] - cy) * dy
+            scene = scene[side < keep]
         print(f"scene underlay: {len(scene)} pts")
 
     if args.load_npz:

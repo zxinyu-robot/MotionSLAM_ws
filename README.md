@@ -67,6 +67,13 @@ cp MID360_config.example.json MID360_config.json
 
 [完整视频 mp4](docs/media/cross_floor_demo.mp4)
 
+### HM3D 真实场景 ObjectNav（demo 分支）
+
+HM3D `4ok3usBNeis` 真实住宅场景，ObjectNav episode（toilet→chair→tv_monitor）由 PCT→SCAN 实际规划闭环跑出（mock 链路），两种底图呈现：
+
+- [洋娃娃屋底图版 mp4](docs/media/hm3d_ep0_dollhouse.mp4) — GLB 贴图场景剖切渲染 + 航迹投影叠加
+- [实时点云底图版 mp4](docs/media/hm3d_ep0_pointcloud.mp4) — 在线点云 + 膨胀占据图双视口
+
 ## 参考工作
 
 - [Super-LIO](https://github.com/Liansheng-Wang/Super-LIO)（`ros2` 分支）— 定位与建图
