@@ -86,6 +86,9 @@ docker exec -d motionslam-cloud bash -lc \
   局部目标塌回起点，`Close to goal` 死循环）。编排层已用
   `decimate_collinear_xy` 把直线段抽稀成首尾两点（走稳定的单段轨迹），
   并丢弃贴近 odom 的前导点（避免零长首段）。真机若复现同类现象同理处理。
-- SCAN 障碍 z 过滤是相对地面 `ground_height=-0.45` 的绝对窗口
-  [-0.13, 1.05]：二楼墙体（z≥1.3）对 SCAN 不可见，PCT 仍可见——
-  跨楼层真机需要把高度过滤改成相对机器人/分层地图。
+- SCAN 障碍 z 过滤是相对地面 `ground_height=-0.45` 的窗口
+  `obstacle_height_min/max`（真机 0.32/1.50 → 绝对 [-0.13, 1.05]）：
+  二楼墙体（z≥1.3）默认对 SCAN 不可见。云端 overlay
+  `demo_scan_planner_cloud.yaml` 已把 `obstacle_height_max` 放宽到 3.0，
+  楼上体素才能进 `/grid_map/occupancy_inflate`；
+  跨楼层真机更合理的做法是把高度过滤改成相对机器人/分层地图。
