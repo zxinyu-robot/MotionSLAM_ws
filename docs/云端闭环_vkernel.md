@@ -62,13 +62,14 @@ docker exec -d motionslam-cloud bash -lc \
 # 录像（mission_succeeded 后自动渲染 mp4）
 docker exec -d motionslam-cloud bash -lc \
   "source /ws/scripts/dev/source_cloud_env.sh && \
-   python3 /ws/src/motionslam_bringup/scripts/cloud_video_render.py \
-     --map-yaml /ws/src/motionslam_bringup/config/vkernel_multifloor.yaml \
-     --out /ws/cross_floor_demo.mp4 --timeout 480"
+   python3 /ws/src/motionslam_bringup/scripts/cloud_video_render_3d.py \
+     --out /ws/cross_floor_3d.mp4 --timeout 480"
 ```
 
-成果视频：`docs/media/cross_floor_demo.mp4`
-（俯视轨迹 + 侧视 x-z 爬升，PCT→BT→SCAN→forwarder 全链路真闭环）。
+成果视频：`docs/media/cross_floor_demo.mp4`（3D 点云渲染版，Foxglove 风格
+高度着色 + 环绕相机；由 `scripts/cloud_video_render_3d.py` 订阅
+`/lio/cloud_world` + `/lio/robo/odom` 录制，PCT→BT→SCAN→forwarder
+全链路真闭环）。另有 `scripts/cloud_video_render.py`（2D 俯视+侧视图）。
 
 注意事项：
 - PCT 是 0.2m 栅格 + 0.35m Chebyshev 膨胀：门洞净宽需 ≥1.2m，

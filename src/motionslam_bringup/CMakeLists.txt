@@ -43,6 +43,7 @@ install(PROGRAMS scripts/cloud_to_grid.py scripts/robot_pose_viz.py
   scripts/task_intent_client.py
   scripts/cloud_mission_watch.py
   scripts/cloud_video_render.py
+  scripts/cloud_video_render_3d.py
   scripts/foxglove_bridge_legacy.sh
   DESTINATION lib/${PROJECT_NAME})
 
