@@ -13,6 +13,8 @@ Elevator-LIO 数据集（`datasets/Elevator-LIO-Dataset`，18.9 GB）：20 条�
 
 ![Elevator-LIO Office1 点云预览](docs/media/elevator_lio_preview.gif)
 
+[完整视频 mp4](docs/media/elevator_lio_preview.mp4)
+
 ### 核心特性（自研能力）
 该工作空间实现了一套稳健且具备容错能力的自主导航技术栈，核心功能涵盖：
 - 度量级定位（Metric Localization）
