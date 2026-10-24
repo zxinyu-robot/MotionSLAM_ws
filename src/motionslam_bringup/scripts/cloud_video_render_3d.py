@@ -92,7 +92,49 @@ def _footprint_cloud(cloud, x, y, z, yaw, radius=3.0):
     return cloud[m]
 
 
-def render(traj, cloud, out_path, fps=15):
+def _load_map_params(yaml_path):
+    import yaml
+
+    data = yaml.safe_load(open(yaml_path))
+    return data["vkernel_sim"]["ros__parameters"]
+
+
+def _height_at(x, y, ramps, floors):
+    for x1, y1, x2, y2, z1, z2, axis in ramps:
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            t = (x - x1) / max(1e-6, x2 - x1) if axis < 0.5 else (y - y1) / max(1e-6, y2 - y1)
+            return z1 + (z2 - z1) * min(1.0, max(0.0, t))
+    for x1, y1, x2, y2, z in floors:
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            return z
+    return 0.0
+
+
+def _surface_cloud(params, step=0.06):
+    """把地面/坡道/楼层平台按高度场采样成密集点云面（仅渲染用，
+    不进 /lio/cloud_world——地面点会被 SCAN 当障碍）。"""
+
+    def chunks(flat, n):
+        return [tuple(flat[i : i + n]) for i in range(0, len(flat) - n + 1, n)]
+
+    floors = chunks(params.get("floors", []), 5)
+    ramps = chunks(params.get("ramps", []), 7)
+    walls = chunks(params.get("walls", []), 5)
+    geo = list(floors) + list(ramps) + list(walls)
+    if not geo:
+        return None
+    xs = [g[0] for g in geo] + [g[2] for g in geo]
+    ys = [g[1] for g in geo] + [g[3] for g in geo]
+    x0, x1 = min(xs) - 0.4, max(xs) + 0.4
+    y0, y1 = min(ys) - 0.4, max(ys) + 0.4
+    gx = np.arange(x0, x1, step)
+    gy = np.arange(y0, y1, step)
+    xx, yy = np.meshgrid(gx, gy)
+    zz = np.vectorize(lambda a, b: _height_at(a, b, ramps, floors))(xx, yy)
+    return np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1).astype(np.float32)
+
+
+def render(traj, cloud, out_path, fps=15, surface=None):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -145,11 +187,16 @@ def render(traj, cloud, out_path, fps=15):
                     ax.plot([x0, x1], [gy, gy], [gz, gz],
                             color="#1c2630", lw=0.4, zorder=0)
 
-            # 点云（全量，按高度着色）
+            # 点云（地表 + 墙/立柱，按高度着色）
+            if surface is not None:
+                snorm = np.clip(surface[:, 2] / max(zmax, 1e-6), 0, 1)
+                ax.scatter(surface[:, 0], surface[:, 1], surface[:, 2],
+                           c=snorm, cmap=cmap, s=1.0, alpha=0.45,
+                           linewidths=0, vmin=0, vmax=1)
             if cloud is not None:
                 cnorm = np.clip(cloud[:, 2] / max(zmax, 1e-6), 0, 1)
                 ax.scatter(cloud[:, 0], cloud[:, 1], cloud[:, 2],
-                           c=cnorm, cmap=cmap, s=1.2, alpha=0.85,
+                           c=cnorm, cmap=cmap, s=1.4, alpha=0.9,
                            linewidths=0, vmin=0, vmax=1)
 
             # 轨迹（已走部分）
@@ -202,7 +249,21 @@ def main():
     ap.add_argument("--odom-topic", default="/lio/robo/odom")
     ap.add_argument("--timeout", type=float, default=480)
     ap.add_argument("--fps", type=int, default=15)
+    ap.add_argument("--map-yaml", default="", help="vkernel 参数 yaml（生成地表点云面）")
+    ap.add_argument("--save-npz", default="", help="录制数据保存路径，便于离线反复渲染")
+    ap.add_argument("--load-npz", default="", help="从 npz 直接渲染，不再订阅 ROS")
     args = ap.parse_args()
+
+    surface = None
+    if args.map_yaml:
+        surface = _surface_cloud(_load_map_params(args.map_yaml))
+
+    if args.load_npz:
+        d = np.load(args.load_npz)
+        render([tuple(r) for r in d["traj"]], d["cloud"], args.out,
+               fps=args.fps, surface=surface)
+        print(f"WROTE {args.out}")
+        return
 
     rclpy.init()
     node = Recorder(args.cloud_topic, args.odom_topic)
@@ -221,7 +282,10 @@ def main():
     if len(node.traj) < 2 or node.cloud is None:
         print("NOT_ENOUGH_DATA", file=sys.stderr)
         sys.exit(2)
-    render(node.traj, node.cloud, args.out, fps=args.fps)
+    if args.save_npz:
+        np.savez(args.save_npz, traj=np.array(node.traj, dtype=np.float64),
+                 cloud=node.cloud.astype(np.float32))
+    render(node.traj, node.cloud, args.out, fps=args.fps, surface=surface)
     print(f"WROTE {args.out}")
 
 
