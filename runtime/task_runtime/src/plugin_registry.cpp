@@ -27,15 +27,20 @@ RegisterResult PluginRegistry::add(PluginDescriptor descriptor) {
   const auto caps = descriptor.provides;
   const auto id = descriptor.plugin_id;
   order_.push_back(id);
+  std::vector<std::string> inserted_caps;
   try {
     plugins_.emplace(id, std::move(descriptor));
     for (const auto& cap : caps) {
-      provided_.insert(cap);
+      // only capabilities this attempt actually added are rolled back;
+      // caps already offered by other plugins must survive a failed add.
+      if (provided_.insert(cap).second) {
+        inserted_caps.push_back(cap);
+      }
     }
   } catch (...) {
     plugins_.erase(id);
     order_.pop_back();
-    for (const auto& cap : caps) {
+    for (const auto& cap : inserted_caps) {
       provided_.erase(cap);
     }
     throw;
