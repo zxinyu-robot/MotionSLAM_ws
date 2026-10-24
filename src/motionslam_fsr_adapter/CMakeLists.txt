@@ -13,13 +13,14 @@ find_package(yaml-cpp REQUIRED)
 # fork-spatial-runtime：默认 FetchContent 拉取 main；也可用
 # -DFSR_SOURCE_DIR=/path/to/fork-spatial-runtime 指向本地检出
 option(FSR_SOURCE_DIR "" "")
+set(FSR_GIT_TAG "main" CACHE STRING "fork-spatial-runtime git tag/branch")
 if(FSR_SOURCE_DIR)
   add_subdirectory(${FSR_SOURCE_DIR} ${CMAKE_BINARY_DIR}/fsr_build)
 else()
   include(FetchContent)
   FetchContent_Declare(fork_spatial_runtime
     GIT_REPOSITORY https://github.com/zxinyu-robot/fork-spatial-runtime.git
-    GIT_TAG main)
+    GIT_TAG ${FSR_GIT_TAG})
   FetchContent_MakeAvailable(fork_spatial_runtime)
 endif()
 

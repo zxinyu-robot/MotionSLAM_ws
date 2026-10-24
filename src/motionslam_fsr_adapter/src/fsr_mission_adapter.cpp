@@ -40,7 +40,11 @@ public:
         ocfg_.ready_settle_s = declare_parameter("cloud_settle_s", 3.0);
         ocfg_.recovery_wait_s = declare_parameter("recovery_wait_s", 2.5);
         ocfg_.max_plan_fail_recovery = declare_parameter("max_plan_fail_recovery", 4);
+        ocfg_.escape_backup_m = declare_parameter("escape_backup_m", 0.80);
+        ocfg_.escape_sidestep_m = declare_parameter("escape_sidestep_m", 0.35);
+        ocfg_.escape_step_timeout_s = declare_parameter("escape_step_timeout_s", 8.0);
         ocfg_.tick_hz = declare_parameter("tick_hz", 10.0);
+        speed_ema_alpha_ = declare_parameter("speed_ema_alpha", 0.3);
         tick_s_ = 1.0 / ocfg_.tick_hz;
         max_subgoal_dist_m_ = declare_parameter("max_subgoal_dist_m", 8.0);
         frame_id_ = declare_parameter<std::string>("frame_id", "map");
@@ -51,6 +55,8 @@ public:
 
         goal_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
         init_path_pub_ = create_publisher<nav_msgs::msg::Path>("/initial_path", 10);
+        bspline_pub_ = create_publisher<scan_planner_msgs::msg::Bspline>(
+            "/planning/bspline", 10);
         status_pub_ = create_publisher<std_msgs::msg::String>("/demo/mission/status", 10);
         event_pub_ = create_publisher<std_msgs::msg::String>("/demo/mission/event", 10);
         lifecycle_pub_ = create_publisher<std_msgs::msg::String>("/demo/lifecycle/transition", 10);
@@ -65,6 +71,9 @@ public:
         bspline_sub_ = create_subscription<scan_planner_msgs::msg::Bspline>(
             "/planning/bspline", 10,
             [this](scan_planner_msgs::msg::Bspline::SharedPtr m) { on_bspline(*m); });
+        pgo_sub_ = create_subscription<std_msgs::msg::String>(
+            "/lio/backend/pgo_state", 10,
+            [this](std_msgs::msg::String::SharedPtr m) { on_pgo_state(m->data); });
         start_sub_ = create_subscription<std_msgs::msg::String>(
             "/demo/mission/start", 10, [this](std_msgs::msg::String::SharedPtr) { start_mission(); });
         cancel_sub_ = create_subscription<std_msgs::msg::String>(
@@ -140,11 +149,28 @@ private:
         have_odom_ = true;
         last_odom_ = now();
         const auto& p = m.pose.pose.position;
+        const auto& q = m.pose.pose.orientation;
         const auto& v = m.twist.twist.linear;
         state_.x = p.x;
         state_.y = p.y;
         state_.z = p.z;
-        state_.speed_mps = std::hypot(v.x, v.y, v.z);
+        state_.yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+        // 真机 odom twist 噪声大：EMA 低通后喂入速度稳定判定
+        const double raw = std::hypot(v.x, v.y, v.z);
+        speed_ema_ = speed_ema_alpha_ * raw + (1.0 - speed_ema_alpha_) * speed_ema_;
+        state_.speed_mps = speed_ema_;
+    }
+
+    void on_pgo_state(const std::string& cur) {
+        const bool applied = (last_pgo_state_ == "OPTIMIZING" ||
+                              last_pgo_state_.empty() ||
+                              last_pgo_state_ == "UNKNOWN") && cur == "APPLIED";
+        last_pgo_state_ = cur;
+        if (applied && mission_started_) {
+            orchestrator_->on_pose_corrected();
+            emit_event("pose_correction_redispatch");
+        }
     }
 
     void on_global_path(const nav_msgs::msg::Path& m) {
@@ -170,6 +196,7 @@ private:
     }
 
     void on_bspline(const scan_planner_msgs::msg::Bspline& m) {
+        last_traj_id_ = std::max(last_traj_id_, static_cast<int64_t>(m.traj_id));
         const bool emergency = m.pos_pts.size() < 2 ||
             std::all_of(m.pos_pts.begin(), m.pos_pts.end(), [&](const auto& p) {
                 const auto& f = m.pos_pts.front();
@@ -178,6 +205,7 @@ private:
             });
         if (emergency) {
             emit_event("emergency_bspline");
+            orchestrator_->on_plan_failed();
             return;
         }
         if (static_cast<int64_t>(m.traj_id) <= traj_id_at_dispatch_) return;
@@ -187,6 +215,26 @@ private:
         planner_ready_ = true;
         orchestrator_->on_planner_ready();
         emit_event("scan_planner_ready");
+    }
+
+    // 物理停止语义：closed_loop 收到退化 Bspline 后 pos_des 恒为当前位
+    // 置 → 输出零速度。与 SCAN EmergencyStop 格式一致（6 个相同控制点，
+    // order=3，均匀节点，间隔 1.0）。
+    void publish_hold_bspline() {
+        if (!have_odom_) return;
+        scan_planner_msgs::msg::Bspline b;
+        b.order = 3;
+        b.traj_id = ++hold_traj_id_;
+        b.start_time = now();
+        for (int i = -3; i <= 6; ++i) b.knots.push_back(static_cast<double>(i));
+        for (int i = 0; i < 6; ++i) {
+            geometry_msgs::msg::Point pt;
+            pt.x = state_.x;
+            pt.y = state_.y;
+            pt.z = state_.z;
+            b.pos_pts.push_back(pt);
+        }
+        bspline_pub_->publish(b);
     }
 
     nav_msgs::msg::Path build_scan_path(const nav_msgs::msg::Path& src) {
@@ -309,10 +357,13 @@ private:
                 awaiting_path_ = true;
                 planner_ready_ = false;
                 goal_pub_->publish(goal);
-                emit_event("subgoal_dispatched");
+                emit_event(cmd.reason.rfind("escape:", 0) == 0 ? "escape_step"
+                                                              : "subgoal_dispatched",
+                           cmd.reason);
                 break;
             }
             case fm::CommandType::StopTrajectory:
+                publish_hold_bspline();
                 emit_event("stop_trajectory", cmd.reason);
                 break;
             case fm::CommandType::RecoveryWait:
@@ -336,13 +387,15 @@ private:
 
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr init_path_pub_;
+    rclcpp::Publisher<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_, event_pub_,
         lifecycle_pub_, start_pub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr global_path_sub_;
     rclcpp::Subscription<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_sub_;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr start_sub_, cancel_sub_, lifecycle_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr start_sub_, cancel_sub_,
+        lifecycle_sub_, pgo_sub_;
     rclcpp::TimerBase::SharedPtr timer_, boot_timer_, start_timer_;
 
     bool mission_started_{false};
@@ -352,6 +405,10 @@ private:
     bool autostart_{false};
     int64_t traj_id_at_dispatch_{-1};
     int64_t last_traj_id_{0};
+    int64_t hold_traj_id_{900000};
+    double speed_ema_alpha_{0.3};
+    double speed_ema_{0.0};
+    std::string last_pgo_state_;
     rclcpp::Time request_stamp_{0, 0, RCL_ROS_TIME};
     rclcpp::Time dispatch_stamp_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_odom_{0, 0, RCL_ROS_TIME};
