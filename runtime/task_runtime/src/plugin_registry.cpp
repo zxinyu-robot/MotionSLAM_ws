@@ -27,21 +27,25 @@ RegisterResult PluginRegistry::add(PluginDescriptor descriptor) {
   const auto caps = descriptor.provides;
   const auto id = descriptor.plugin_id;
   order_.push_back(id);
-  std::vector<std::string> inserted_caps;
   try {
     plugins_.emplace(id, std::move(descriptor));
     for (const auto& cap : caps) {
-      // only capabilities this attempt actually added are rolled back;
-      // caps already offered by other plugins must survive a failed add.
-      if (provided_.insert(cap).second) {
-        inserted_caps.push_back(cap);
-      }
+      provided_.insert(cap);
     }
   } catch (...) {
     plugins_.erase(id);
     order_.pop_back();
-    for (const auto& cap : inserted_caps) {
-      provided_.erase(cap);
+    // Roll back only caps no surviving plugin still provides — no
+    // bookkeeping allocation in the unwind path.
+    for (const auto& cap : caps) {
+      const bool still_provided = std::any_of(
+          plugins_.begin(), plugins_.end(), [&](const auto& entry) {
+            const auto& p = entry.second.provides;
+            return std::find(p.begin(), p.end(), cap) != p.end();
+          });
+      if (!still_provided) {
+        provided_.erase(cap);
+      }
     }
     throw;
   }
