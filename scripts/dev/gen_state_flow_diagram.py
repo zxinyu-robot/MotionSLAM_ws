@@ -1,126 +1,122 @@
 #!/usr/bin/env python3
 """生成 README 用的数据状态流转时序图（空间状态→任务意图→安全动作→新状态）。
 
-风格：竖向泳道 = 链路组件，时间自上而下；消息箭头按三空间语义着色。
-输出：docs/media/state_flow_seq.png（GitHub README 内嵌）
+泳道 = 链路组件（时间自上而下）；箭头按三空间语义着色；
+loop/alt 框表达子目标循环与失败分支。输出 docs/media/state_flow_seq.png
 """
+import os
+
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 import matplotlib.font_manager as fm
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 
-# 中文字体
-for name in ("Noto Sans CJK SC", "WenQuanYi Micro Hei", "SimHei",
-             "Microsoft YaHei", "DejaVu Sans"):
+for name in ("Noto Sans CJK SC", "WenQuanYi Micro Hei", "SimHei", "DejaVu Sans"):
     if any(name in f.name for f in fm.fontManager.ttflist):
         plt.rcParams["font.family"] = name
         break
 plt.rcParams["axes.unicode_minus"] = False
 
-# ---------- 泳道（从左到右 = 消息链路上的组件） ----------
 LANES = [
-    ("thin_harness", "Thin Harness\n任务意图入口", "#7048e8"),
-    ("bt", "BT 任务编排\n（符号空间）", "#1864ab"),
-    ("pct", "PCT 全局规划", "#0b7285"),
-    ("scan", "SCAN 局部规划\n（度量空间）", "#087f5b"),
-    ("exec", "closed_loop\n+ forwarder", "#e8590c"),
-    ("vkernel", "vkernel\n虚拟设备内核", "#862e9c"),
+    ("harness", "Thin Harness\n任务请求入口", "#7048e8"),
+    ("bt", "BT 任务编排\n状态黑板（符号空间）", "#1864ab"),
+    ("pct", "PCT 全局规划\n（度量空间）", "#0b7285"),
+    ("scan", "SCAN 局部规划\nB 样条（度量空间）", "#087f5b"),
+    ("exec", "closed_loop 跟踪\n+ forwarder 适配", "#e8590c"),
+    ("sport", "vkernel 虚拟设备内核\nSport API", "#862e9c"),
+    ("hub", "空间状态 Hub\nSuper-LIO（世界空间）", "#2b8a3e"),
 ]
+C = {"state": "#2b8a3e", "intent": "#7048e8", "action": "#e8590c",
+     "exec": "#c92a2a", "newstate": "#868e96"}
 
-# ---------- 消息（from_lane, to_lane, label, 语义组, 是否自环/返回线型） ----------
-# 语义组着色：空间状态=青  任务意图=紫  安全动作=橙  新状态=灰虚线
-PHASE_COLOR = {
-    "state": "#0b7285",      # 空间状态
-    "intent": "#7048e8",     # 任务意图
-    "action": "#e8590c",     # 安全动作
-    "newstate": "#868e96",   # 新状态
-}
+# (src, dst, label, phase)；src==dst 为自处理
 MSGS = [
-    # (src, dst, label, phase)
-    ("thin_harness", "bt", "① 任务意图（语义目标）\nintent: navigate(x,y,z)", "intent"),
-    ("bt", "pct", "② 全局目标下发", "intent"),
-    ("vkernel", "pct", "③ 空间状态\n/lio/cloud_world + /lio/robo/odom", "state"),
-    ("pct", "bt", "④ /global_path", "intent"),
-    ("bt", "scan", "⑤ /initial_path（子目标）", "intent"),
-    ("vkernel", "scan", "⑥ 空间状态\n点云 + 位姿（持续）", "state"),
-    ("scan", "exec", "⑦ 安全动作\n局部轨迹 navi_mode=3", "action"),
-    ("exec", "vkernel", "⑧ /cmd_vel → 电机指令", "action"),
-    ("vkernel", "bt", "⑨ 新状态回环\nodom 积分更新 → 判定子目标", "newstate"),
-    ("bt", "thin_harness", "⑩ task_terminal\nstate=succeeded", "newstate"),
+    ("harness", "bt", "① GoalRequest{task_id, action_type, target_pose,\n target_frame, position_tolerance, timeout}", "intent"),
+    ("hub", "bt", "② 空间状态 → BT 黑板（持续）：/lio/robo/odom 位姿·速度\n+ frame_id/stamp + 定位有效性 /lio/relocation/*", "state"),
+    ("hub", "pct", "③ /lio/cloud_world + 当前位姿 → PCT 内部 tomogram\n可通行性：坡度 / 台阶高度差 / 垂直障碍 / 足迹", "state"),
+    ("bt", "pct", "④ 全局目标 goal_pose{map, task_id}", "intent"),
+    ("pct", "bt", "⑤ PlanResult{status, plan_id, /global_path, failure_code}", "intent"),
+    ("bt", "bt", "⑥ 前视截取全局路径段 + 共线抽稀 → 局部参考", "intent"),
+    ("bt", "scan", "⑦ 局部参考路径段 /initial_path{map, plan_id, subgoal_idx}", "intent"),
+    ("hub", "scan", "⑧ 点云 + 位姿（持续）→ 在线占据栅格", "state"),
+    ("scan", "exec", "⑨ 局部轨迹 B 样条 /planning/bspline{traj_id, start_time, frame}", "action"),
+    ("exec", "sport", "⑩ 线速度+角速度 /cmd_vel → 限幅·看门狗 400ms\n→ Sport API Move(vx, vy, ωz)", "action"),
+    ("sport", "hub", "⑪ 机体运动 → 新观测", "newstate"),
+    ("exec", "bt", "⑫ ExecStatus{execution_state, failure_code, tracking_error,\n goal_reached, trajectory_valid, traj_id}", "exec"),
+    ("bt", "bt", "⑬ 判定：|pose−subgoal| ≤ subgoal_reach_m 且速度稳定 → 下一子目标\n无进展 > stuck_timeout / 定位失效 → 停旧轨迹 → 恢复分支", "exec"),
+    ("bt", "harness", "⑭ task_terminal{state=succeeded|failed|canceled, reason}\n仅最终目标到达且满足终止条件才 succeeded", "newstate"),
 ]
 
-# ---------- 几何 ----------
-fig, ax = plt.subplots(figsize=(13.2, 7.6), dpi=150)
-fig.patch.set_facecolor("#ffffff")
-ax.set_xlim(0, 13.2)
-ax.set_ylim(0, 7.6)
-ax.axis("off")
+W, H = 16.0, 13.6
+fig, ax = plt.subplots(figsize=(W, H), dpi=130)
+ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off")
+top, bot = H - 0.9, 1.35
+lx = {}
+for i, (k, label, col) in enumerate(LANES):
+    x = 1.25 + i * 2.25
+    lx[k] = x
+    ax.plot([x, x], [top - 0.45, bot], color="#ced4da", lw=1.1, ls=(0, (4, 3)), zorder=1)
+    ax.add_patch(FancyBboxPatch((x - 1.02, top - 0.42), 2.04, 0.66,
+                 boxstyle="round,pad=0.05,rounding_size=0.09",
+                 fc="#f8f9fa", ec=col, lw=1.8, zorder=3))
+    ax.text(x, top - 0.09, label, ha="center", va="center", fontsize=9.6,
+            color="#212529", zorder=4, linespacing=1.3)
 
-lane_x = {}
-top_y, bot_y = 6.9, 0.55
-for i, (key, label, color) in enumerate(LANES):
-    x = 1.5 + i * 2.1
-    lane_x[key] = x
-    # 泳道竖线
-    ax.plot([x, x], [top_y - 0.42, bot_y], color="#ced4da",
-            lw=1.1, ls=(0, (4, 3)), zorder=1)
-    # 顶部节点
-    bb = FancyBboxPatch((x - 0.86, top_y - 0.40), 1.72, 0.52,
-                        boxstyle="round,pad=0.06,rounding_size=0.09",
-                        fc="#f1f3f5", ec=color, lw=1.6, zorder=3)
-    ax.add_patch(bb)
-    ax.text(x, top_y - 0.14, label, ha="center", va="center",
-            fontsize=10.5, color="#212529", zorder=4, linespacing=1.25)
+GAP_AFTER = {4: 0.75, 12: 0.5}  # 给 alt 框与 loop 框尾留空
+ys, y = [], top - 1.2
+for i in range(len(MSGS)):
+    ys.append(y)
+    y -= 0.66 + GAP_AFTER.get(i, 0.0)
+for (s, d, label, ph), y in zip(MSGS, ys):
+    col = C[ph]
+    ls = (0, (5, 3)) if ph == "newstate" else "-"
+    if s == d:
+        x = lx[s]
+        ax.add_patch(FancyArrowPatch((x + 0.05, y + 0.12), (x + 0.05, y - 0.18),
+                     connectionstyle="arc3,rad=-1.6", arrowstyle="-|>",
+                     mutation_scale=12, color=col, lw=1.6, zorder=5))
+        ax.text(x + 0.42, y - 0.03, label, ha="left", va="center", fontsize=8.6,
+                color=col, zorder=6, bbox=dict(fc="white", ec="none", alpha=0.9, pad=1))
+        continue
+    x1, x2 = lx[s], lx[d]
+    sgn = 1 if x2 > x1 else -1
+    ax.add_patch(FancyArrowPatch((x1 + sgn * 0.06, y), (x2 - sgn * 0.06, y),
+                 arrowstyle="-|>", mutation_scale=14, color=col, lw=1.8, ls=ls, zorder=5))
+    ax.text((x1 + x2) / 2, y + 0.06, label, ha="center", va="bottom", fontsize=8.6,
+            color=col, zorder=6, linespacing=1.2,
+            bbox=dict(fc="white", ec="none", alpha=0.9, pad=1))
 
-n = len(MSGS)
-msg_ys = [top_y - 1.05 - i * ((top_y - 1.05 - bot_y - 0.35) / (n - 1))
-          for i in range(n)]
+def frame(y0, y1, x0, x1, tag, note, col):
+    ax.add_patch(Rectangle((x0, y1), x1 - x0, y0 - y1, fill=False, ec=col, lw=1.3,
+                 ls=(0, (6, 3)), zorder=2))
+    ax.add_patch(Rectangle((x0, y0 - 0.28), 0.62, 0.28, fc=col, ec=col, zorder=3))
+    ax.text(x0 + 0.31, y0 - 0.14, tag, ha="center", va="center", fontsize=9,
+            color="white", zorder=4, weight="bold")
+    ax.text(x0 + 0.72, y0 - 0.14, note, ha="left", va="center", fontsize=8.6,
+            color=col, zorder=4)
 
-for (src, dst, label, phase), y in zip(MSGS, msg_ys):
-    x1, x2 = lane_x[src], lane_x[dst]
-    color = PHASE_COLOR[phase]
-    dashed = (phase == "newstate")
-    if x2 > x1:
-        arrow = FancyArrowPatch((x1 + 0.06, y), (x2 - 0.06, y),
-                                arrowstyle="-|>", mutation_scale=15,
-                                color=color, lw=1.9,
-                                ls=(0, (5, 3)) if dashed else "-",
-                                zorder=5)
-        lx = (x1 + x2) / 2
-    else:
-        arrow = FancyArrowPatch((x1 - 0.06, y), (x2 + 0.06, y),
-                                arrowstyle="-|>", mutation_scale=15,
-                                color=color, lw=1.9,
-                                ls=(0, (5, 3)) if dashed else "-",
-                                zorder=5)
-        lx = (x1 + x2) / 2
-    ax.add_patch(arrow)
-    ax.text(lx, y + 0.075, label, ha="center", va="bottom",
-            fontsize=9.2, color=color, zorder=6,
-            bbox=dict(fc="white", ec="none", alpha=0.85, pad=1.1))
+frame(ys[4] - 0.12, ys[4] - 0.62, lx["bt"] - 0.95, lx["pct"] + 1.05, "alt",
+      "status≠OK（不可达/地图不完整/定位无效/超时）→ 重试 · 重规划 · 恢复 · 终止", "#c92a2a")
+frame(ys[5] + 0.45, ys[12] - 0.42, lx["bt"] - 1.0, lx["hub"] + 1.05, "loop",
+      "逐子目标推进：中间子目标到达 → 回到 ⑥；最终目标到达 → 跳出", "#1864ab")
 
-# ---------- 左侧语义组标注（泳道下方的相位条） ----------
-# 图例
-legend_items = [
-    ("空间状态", PHASE_COLOR["state"]),
-    ("任务意图", PHASE_COLOR["intent"]),
-    ("安全动作", PHASE_COLOR["action"]),
-    ("新状态回环", PHASE_COLOR["newstate"]),
-]
-lx = 1.15
-for name, c in legend_items:
-    ax.plot([lx, lx + 0.5], [0.18, 0.18], color=c, lw=2.4,
-            ls=(0, (5, 3)) if name == "新状态回环" else "-")
-    ax.text(lx + 0.6, 0.18, name, va="center", fontsize=10, color="#343a40")
-    lx += 1.55
-
-ax.set_title("MotionSLAM 数据状态流转时序图\n空间状态 → 任务意图 → 安全动作 → 新状态（闭环）",
-             fontsize=14.5, color="#212529", pad=14, linespacing=1.5)
-
+ax.text(0.25, 0.95,
+        "时空契约：所有接口携带 frame_id（map）+ stamp + 有效性；关联 ID 链 task_id → plan_id → traj_id，"
+        "规划更新 / 定位重置后旧版本数据作废，不得继续跟踪。\n"
+        "执行三事件区分：速度指令被接受 ≠ 机器人实际运动 ≠ 到达目标；forwarder 看门狗超时自动 StopMove，不依赖 BT 响应。",
+        fontsize=9, color="#343a40", va="center", linespacing=1.6)
+x = 0.4
+for name, k in [("空间状态", "state"), ("任务意图 / 规划结果", "intent"),
+                ("安全动作", "action"), ("执行状态 / 判定", "exec"), ("新状态回环", "newstate")]:
+    ax.plot([x, x + 0.5], [0.35, 0.35], color=C[k], lw=2.4,
+            ls=(0, (5, 3)) if k == "newstate" else "-")
+    ax.text(x + 0.6, 0.35, name, va="center", fontsize=9.5, color="#343a40")
+    x += 2.6
+ax.set_title("MotionSLAM 数据状态流转时序图\n空间状态 → 任务意图 → 安全动作 → 新状态（任务级闭环）",
+             fontsize=14.5, color="#212529", pad=8, linespacing=1.5)
 plt.tight_layout()
-import os
-out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "..", "docs", "media", "state_flow_seq.png")
-plt.savefig(out, dpi=150, bbox_inches="tight", facecolor="#ffffff")
-print(f"WROTE {out}")
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                   "docs", "media", "state_flow_seq.png")
+plt.savefig(os.path.normpath(out), dpi=130, bbox_inches="tight", facecolor="white")
+print("WROTE", os.path.normpath(out))

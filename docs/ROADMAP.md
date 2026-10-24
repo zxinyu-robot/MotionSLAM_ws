@@ -52,6 +52,11 @@
 - [ ] **三空间边界守护固化**：世界空间只提交意图、度量空间独占实时执行
   的约束在接口层固化（意图校验已有一版，跨空间调用审计未做）
 
+- [ ] **P0 跨空间数据契约落地**（见 `docs/符号空间契约.md`「跨空间数据契约」）：
+  GoalRequest（容差/超时/坐标系）、PCT/SCAN `PlanResult` 显式失败码、
+  closed_loop `ExecStatus` 结构化执行反馈、`task_id→plan_id→traj_id` 版本链，
+  到达判定加速度稳定条件——C++ 侧实现（task_runtime + motionslam_pipeline）
+
 ## C. 工程质量
 
 - [x] **子模块注册**：5 个 gitlink 已注册（Super-LIO/livox_ros_driver2/
