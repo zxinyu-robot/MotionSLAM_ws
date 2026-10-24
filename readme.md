@@ -62,6 +62,12 @@ PCT provides global guidance; BT is the unique execution-path writer; SCAN track
 
 See [test records](docs/测试验收/测试记录.md) for the dated evidence and [the runtime roadmap](docs/规划/项目规划_空间状态运行时.md) for the target and gates.
 
+## Dataset preview
+
+Elevator-LIO 数据集（`datasets/Elevator-LIO-Dataset`，18.9 GB，替代北大数据集）作为电梯内退化场景的源头状态数据：20 条序列 / 79 次电梯乘坐，Livox MID-360（`/livox/lidar`、`/livox/imu`）。下图为 `Office1.bag` 的 BEV 点云回放预览（未经 LIO，原始雷达帧滑动窗累积，颜色=高度）。
+
+![Elevator-LIO Office1 point-cloud preview](docs/media/elevator_lio_preview.gif)
+
 ## Try the existing hardware stack
 
 These commands apply to the historical Go2 integration environment, not to the standalone Linux runtime core. Keep the existing ROS 2 overlay unchanged.
