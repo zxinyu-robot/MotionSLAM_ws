@@ -165,6 +165,8 @@ class LocalMapNode final : public rclcpp::Node {
     body_map_odom.header.frame_id = map_frame_;
     body_map_odom.child_frame_id = odom->child_frame_id;
     body_map_odom.pose.pose = Se2ToPose(body_map);
+    // 平面位姿走 SE2，但保留 odom 高度：跨楼层后 SCAN 碰撞检查高度须与点云同层
+    body_map_odom.pose.pose.position.z = odom->pose.pose.position.z;
     body_map_odom.twist = odom->twist;
     body_pose_pub_->publish(body_map_odom);
   }

@@ -1,0 +1,20 @@
+# vkernel_sim HM3D 真场景：4ok3usBNeis（MFMON objectnav val，两层住宅）
+# 点云/地面高度由 scene_file(npz) 提供：hm3d_to_vkernel.py 生成
+# 起点 = episode 2 起点（glb 系 x=hm.x, y=-hm.z, z=hm.y+0.35 body 高度），yaw≈-yaw_hm
+vkernel_sim:
+  ros__parameters:
+    odom_rate_hz: 50.0
+    cloud_rate_hz: 5.0
+    cmd_timeout_s: 0.6
+    start_x: 7.03487
+    start_y: -2.26951
+    start_yaw: 1.642
+    start_z: 0.0
+    odom_origin_z: 2.37
+    blind_m: 0.5
+    cloud_voxel_m: 0.10
+    wall_z_min: 0.30
+    wall_z_max: 1.20
+    sample_step_m: 0.05
+    scene_file: "/ws/data/hm3d/4ok3usBNeis_vkernel.npz"
+    step_z: 0.30

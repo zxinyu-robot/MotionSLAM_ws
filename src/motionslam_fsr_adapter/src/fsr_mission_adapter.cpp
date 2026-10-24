@@ -136,6 +136,7 @@ private:
                 sg.z = wp["z"].as<double>();
                 sg.frame_id = frame_id_;
                 sg.reach_tolerance_m = ocfg_.subgoal_reach_m;
+                if (wp["label"]) sg.label = wp["label"].as<std::string>();
                 req.subgoals.push_back(sg);
             }
         } catch (const std::exception& e) {
@@ -196,6 +197,9 @@ private:
     }
 
     void on_bspline(const scan_planner_msgs::msg::Bspline& m) {
+        // 自身发布的保持轨迹（hold_traj_id_ 段）回环到同一话题：不参与规划器状态判定，
+        // 否则会把 last_traj_id_ 抬到 900000+，此后所有 SCAN 真轨迹都被判为过期
+        if (static_cast<int64_t>(m.traj_id) > kHoldTrajIdBase) return;
         last_traj_id_ = std::max(last_traj_id_, static_cast<int64_t>(m.traj_id));
         const bool emergency = m.pos_pts.size() < 2 ||
             std::all_of(m.pos_pts.begin(), m.pos_pts.end(), [&](const auto& p) {
@@ -208,10 +212,20 @@ private:
             orchestrator_->on_plan_failed();
             return;
         }
-        if (static_cast<int64_t>(m.traj_id) <= traj_id_at_dispatch_) return;
-        if (dispatch_stamp_.nanoseconds() > 0 &&
-            rclcpp::Time(m.start_time) < dispatch_stamp_)
+        if (static_cast<int64_t>(m.traj_id) <= traj_id_at_dispatch_) {
+            RCLCPP_INFO(get_logger(),
+                        "bspline rejected: traj_id=%lld <= at_dispatch=%lld",
+                        (long long)m.traj_id, (long long)traj_id_at_dispatch_);
             return;
+        }
+        if (dispatch_stamp_.nanoseconds() > 0 &&
+            rclcpp::Time(m.start_time) < dispatch_stamp_) {
+            RCLCPP_INFO(get_logger(),
+                        "bspline rejected: start_time=%.3f < dispatch=%.3f",
+                        rclcpp::Time(m.start_time).seconds(),
+                        dispatch_stamp_.seconds());
+            return;
+        }
         planner_ready_ = true;
         orchestrator_->on_planner_ready();
         emit_event("scan_planner_ready");
@@ -305,10 +319,10 @@ private:
         return out;
     }
 
-    void emit_event(const std::string& ev, const std::string& detail = "") {
+    void emit_event(const std::string& ev, const std::string& detail = "", long idx = -1) {
         std_msgs::msg::String m;
         m.data = "{\"event\":\"" + ev + "\",\"adapter\":\"fsr\",\"subgoal_index\":" +
-                 std::to_string(orchestrator_->current_subgoal()) +
+                 std::to_string(idx >= 0 ? idx : (long)orchestrator_->current_subgoal()) +
                  (detail.empty() ? "" : ",\"detail\":\"" + detail + "\"") + "}";
         event_pub_->publish(m);
         std_msgs::msg::String s;
@@ -342,6 +356,20 @@ private:
         state_.stamp_ns = t_now.nanoseconds();
         state_.localization_valid = state_fresh && cloud_fresh;
         const auto cmd = orchestrator_->tick(state_, planner_ready_);
+        if (++hb_ticks_ % 50 == 0) {
+            RCLCPP_INFO(get_logger(),
+                        "hb: status=%d loc=%d odom=%d cloud=%d planner_ready=%d",
+                        (int)orchestrator_->status(), (int)state_.localization_valid,
+                        (int)state_fresh, (int)cloud_fresh, (int)planner_ready_);
+        }
+        // 转发 orchestrator 内部事件（subgoal_reached/stuck/recovery/escape/label 等），
+        // 适配层自产的事件名跳过避免重复。
+        const auto& evs = orchestrator_->events();
+        for (; events_seen_ < evs.size(); ++events_seen_) {
+            const auto& e = evs[events_seen_];
+            if (e.name == "subgoal_dispatched" || e.name == "mission_terminal") continue;
+            emit_event(e.name, e.detail, (long)e.subgoal_index);
+        }
         switch (cmd.type) {
             case fm::CommandType::DispatchSubgoal: {
                 geometry_msgs::msg::PoseStamped goal;
@@ -359,7 +387,7 @@ private:
                 goal_pub_->publish(goal);
                 emit_event(cmd.reason.rfind("escape:", 0) == 0 ? "escape_step"
                                                               : "subgoal_dispatched",
-                           cmd.reason);
+                           cmd.reason.empty() ? cmd.target.label : cmd.reason);
                 break;
             }
             case fm::CommandType::StopTrajectory:
@@ -405,7 +433,8 @@ private:
     bool autostart_{false};
     int64_t traj_id_at_dispatch_{-1};
     int64_t last_traj_id_{0};
-    int64_t hold_traj_id_{900000};
+    static constexpr int64_t kHoldTrajIdBase = 900000;
+    int64_t hold_traj_id_{kHoldTrajIdBase};
     double speed_ema_alpha_{0.3};
     double speed_ema_{0.0};
     std::string last_pgo_state_;
@@ -414,6 +443,8 @@ private:
     rclcpp::Time last_odom_{0, 0, RCL_ROS_TIME};
     rclcpp::Time last_cloud_{0, 0, RCL_ROS_TIME};
     std::string waypoints_file_, frame_id_, lifecycle_state_;
+    std::size_t events_seen_{0};
+    int hb_ticks_{0};
     double tick_s_{0.1};
     double max_subgoal_dist_m_{8.0};
 };

@@ -300,6 +300,13 @@ def _setup(context, *args, **kwargs):
                 executable="pct_resident_planner",
                 name="pct_planner",
                 output="screen",
+                parameters=[{
+                    # 全局规划只给拓扑路线，清障由 SCAN 局部层负责；
+                    # 0.2m 栅格下 >0.1 的膨胀会把 ~0.8m 门洞/小房间封死
+                    "inflate_m": 0.05,
+                    # 目标落在不可达小房间时吸附到最近可达格（语义：尽量靠近）
+                    "max_goal_snap_m": 1.2,
+                }],
                 remappings=[
                     ("explored_areas", cloud_topic),
                     ("state_estimation", body_pose_topic),

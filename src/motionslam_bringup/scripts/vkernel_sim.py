@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+import numpy as np
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -132,6 +134,23 @@ class VKernelSim(Node):
         self.declare_parameter("wall_z_min", 0.30)
         self.declare_parameter("wall_z_max", 1.20)
         self.declare_parameter("sample_step_m", 0.05)
+        # HM3D 等真实场景资产（hm3d_to_vkernel.py 产物）：设置后
+        # 场景点云替代参数化房间，地面高度改由多层高度图查询
+        self.declare_parameter("scene_file", "")
+        self.declare_parameter("step_z", 0.45)
+        # 帧约定对齐 Super-LIO：odom 原点 = 起点处机体（雷达）高度，场景 z 减去该值
+        self.declare_parameter("odom_origin_z", 0.0)
+        # 等效 Super-LIO lio.preprocess.blind：雷达近场盲区半径（m）
+        self.declare_parameter("blind_m", 0.5)
+        # 体素降采样（m），滤掉贴地碎点噪声
+        self.declare_parameter("cloud_voxel_m", 0.10)
+        # 虚拟雷达可见性：球面角度 z-buffer 取每个方向最近点（遮挡剔除），
+        # 否则射线穿透墙/家具把已占据体素 raycast 清空。FOV 为 Mid-360
+        # (-7°~52°) 叠加 Go2 安装俯仰 11.8° 后的近似值
+        self.declare_parameter("fov_el_min_deg", -19.0)
+        self.declare_parameter("fov_el_max_deg", 40.0)
+        self.declare_parameter("ang_res_deg", 0.8)
+        self.declare_parameter("max_range_m", 12.0)
 
         self._world = str(self.get_parameter("world_frame").value)
         self._body = str(self.get_parameter("body_frame").value)
@@ -192,6 +211,24 @@ class VKernelSim(Node):
             z_max=float(self.get_parameter("wall_z_max").value),
             step=float(self.get_parameter("sample_step_m").value),
         )
+        self._hm: Optional[tuple[np.ndarray, float, np.ndarray]] = None
+        self._scene_pts: Optional[np.ndarray] = None
+        scene_file = str(self.get_parameter("scene_file").value)
+        if scene_file:
+            data = np.load(scene_file)
+            oz = float(self.get_parameter("odom_origin_z").value)
+            pts = data["points"][:, :4].astype(np.float32)
+            pts[:, 2] -= oz
+            self._scene_pts = pts
+            self._cloud_points = []
+            self._hm = (
+                data["hm_origin"].astype(float),
+                float(data["hm_res"]),
+                data["hm_levels"].astype(float) - oz,
+            )
+            self.get_logger().info(
+                f"vkernel_sim: scene_file={scene_file} pts={len(self._scene_pts)}"
+            )
         if not self._cloud_points:
             self.get_logger().warn("vkernel_sim: 房间为空（walls/pillars 未配置）")
 
@@ -237,7 +274,7 @@ class VKernelSim(Node):
         self._x += (self._vx * c - self._vy * s) * dt
         self._y += (self._vx * s + self._vy * c) * dt
         self._yaw = math.atan2(math.sin(self._yaw + self._vyaw * dt), math.cos(self._yaw + self._vyaw * dt))
-        self._z = _height_at(self._x, self._y, self._ramps, self._floors)
+        self._z = self._ground_z()
 
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -253,19 +290,90 @@ class VKernelSim(Node):
         msg.twist.twist.angular.z = self._vyaw
         self._odom_pub.publish(msg)
 
+    def _ground_z(self) -> float:
+        """地面 z：优先场景高度图（取距当前 z 最近的候选层，模拟沿楼梯逐层过渡），
+        否则回退参数化 ramps/floors。"""
+        if self._hm is not None:
+            (ox, oy), res, levels = self._hm
+            cx = int((self._x - ox) / res)
+            cy = int((self._y - oy) / res)
+            if 0 <= cy < levels.shape[0] and 0 <= cx < levels.shape[1]:
+                cands = levels[cy, cx][np.isfinite(levels[cy, cx])]
+                if cands.size:
+                    step = float(self.get_parameter("step_z").value)
+                    # 双向步高约束：只允许 |Δz|<=step 的层（台阶 ~0.2m 逐级可上可下；
+                    # 中庭/梯井空洞处底层不可瞬移跌落——等效地面连续约束）
+                    reach = cands[np.abs(cands - self._z) <= step]
+                    if reach.size:
+                        return float(reach[np.argmin(np.abs(reach - self._z))])
+                    return self._z  # 无可达层：视为撞墙/悬空，保持当前高度
+            return self._z
+        return _height_at(self._x, self._y, self._ramps, self._floors)
+
+    _FIELDS = [
+        PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+        PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+        PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
+    ]
+
+    def _visible_points(self) -> np.ndarray:
+        """以当前雷达位姿做遮挡剔除 + 盲区/量程/FOV 裁剪。"""
+        pts = self._scene_pts
+        d = pts[:, :3] - np.array([self._x, self._y, self._z], np.float32)
+        r = np.linalg.norm(d, axis=1)
+        blind = float(self.get_parameter("blind_m").value)
+        keep = (r > max(blind, 1e-3)) & (r < float(self.get_parameter("max_range_m").value))
+        pts, d, r = pts[keep], d[keep], r[keep]
+        el = np.degrees(np.arcsin(np.clip(d[:, 2] / r, -1.0, 1.0)))
+        el_min = float(self.get_parameter("fov_el_min_deg").value)
+        fov = (el >= el_min) & (el <= float(self.get_parameter("fov_el_max_deg").value))
+        pts, d, r, el = pts[fov], d[fov], r[fov], el[fov]
+        res = float(self.get_parameter("ang_res_deg").value)
+        az = np.degrees(np.arctan2(d[:, 1], d[:, 0])) + 180.0
+        n_el = int(180.0 / res) + 1
+        key = (az / res).astype(np.int64) * n_el + ((el - el_min) / res).astype(np.int64)
+        order = np.lexsort((r, key))
+        _, first = np.unique(key[order], return_index=True)
+        return pts[order[first]]
+
+    def _filtered_scene_msg(self) -> PointCloud2:
+        """等效真实 lidar 前端：可见性(遮挡+blind+FOV) → 本层地面分割 +
+        通行高度带（虚拟天花板）→ 体素降采样滤碎点。"""
+        level = self._ground_z()
+        surface_z = level - 0.35  # hm_levels 存 body 高度 = 地表+0.35
+        band = self._visible_points()
+        rel = band[:, 2] - surface_z
+        band = band[(rel > 0.10) & (rel < 1.60)]
+        vox = float(self.get_parameter("cloud_voxel_m").value)
+        if vox > 0.0 and len(band):
+            key = np.floor(band[:, :3] / vox).astype(np.int64)
+            _, idx = np.unique(key, axis=0, return_index=True)
+            band = band[np.sort(idx)]
+        msg = PointCloud2()
+        msg.header.frame_id = self._world
+        msg.height = 1
+        msg.width = int(len(band))
+        msg.fields = self._FIELDS
+        msg.is_bigendian = False
+        msg.point_step = 16
+        msg.row_step = 16 * msg.width
+        msg.is_dense = True
+        msg.data = np.ascontiguousarray(band, dtype=np.float32).tobytes()
+        return msg
+
     def _on_cloud_tick(self) -> None:
+        if self._scene_pts is not None:
+            msg = self._filtered_scene_msg()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            self._cloud_pub.publish(msg)
+            return
         if not self._cloud_points:
             return
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
         header.frame_id = self._world
-        fields = [
-            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
-            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
-            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
-            PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
-        ]
-        msg = pc2.create_cloud(header, fields, self._cloud_points)
+        msg = pc2.create_cloud(header, self._FIELDS, self._cloud_points)
         self._cloud_pub.publish(msg)
 
 
