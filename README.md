@@ -32,3 +32,18 @@ Unitree Go2 + Mid-360 端侧自主导航（ROS 2 Humble）：解决**足式机�
 - [PCT_planner](https://github.com/VectorRobotics/PCT_planner) — 全局路径规划
 - [unitree_ros2](https://github.com/unitreerobotics/unitree_ros2) — Go2 运动接口
 - [livox_ros_driver2](https://github.com/Livox-SDK/livox_ros_driver2) — Mid-360 驱动
+
+## 关联项目
+
+**空间运行时与通信**
+- [Fork Spatial Runtime](https://github.com/zxinyu-robot/fork-spatial-runtime) — 增量空间状态、因子校验与原子图事务运行时
+- [Swarm Spatial Link](https://github.com/zxinyu-robot/swarm-spatial-link) — 面向多机器人弱网协同的自适应通信中间件
+- [Multi-Robot Map Fusion](https://github.com/zxinyu-robot/multi-robot-map-fusion) — 共享内存数据路径与版本化子图融合核心
+
+**导航与安全**
+- [Legged Navigation Runtime](https://github.com/zxinyu-robot/legged-navigation-runtime) — 双足机器人故障恢复定位与多楼层导航运行时
+- [Legged Terrain State](https://github.com/zxinyu-robot/legged-terrain-state) — 四足机器人地形状态契约、可通行性评估与安全降级
+
+**学习与诊断**
+- [Interactive Nav Learning](https://github.com/zxinyu-robot/interactive-nav-learning) — 支持中途纠正的行为克隆与 DAgger 导航学习基线
+- [SlamDoctor](https://github.com/zxinyu-robot/SlamDoctor) — 基于运行证据与故障图的 SLAM 导航诊断 CLI
