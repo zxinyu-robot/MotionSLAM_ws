@@ -22,12 +22,24 @@ RegisterResult PluginRegistry::add(PluginDescriptor descriptor) {
     }
   }
 
-  for (const auto& cap : descriptor.provides) {
-    provided_.insert(cap);
-  }
+  // Transactional: if any container update throws, roll everything back so
+  // the registry never holds a plugin that enumeration cannot see.
+  const auto caps = descriptor.provides;
   const auto id = descriptor.plugin_id;
-  plugins_.emplace(id, std::move(descriptor));
   order_.push_back(id);
+  try {
+    plugins_.emplace(id, std::move(descriptor));
+    for (const auto& cap : caps) {
+      provided_.insert(cap);
+    }
+  } catch (...) {
+    plugins_.erase(id);
+    order_.pop_back();
+    for (const auto& cap : caps) {
+      provided_.erase(cap);
+    }
+    throw;
+  }
   return RegisterResult::kRegistered;
 }
 
