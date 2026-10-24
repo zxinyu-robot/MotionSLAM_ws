@@ -24,6 +24,10 @@
 > （`runtime/task_runtime`、`src/motionslam_pipeline`）。Python 层
 > （demo_scan_bt_orchestrator、thin_harness、task_runtime_adapter）是
 > 过渡形态与验证工具，新能力不进 Python。
+> 决策编排终态不是状态机：**决策模型 + ESN（回声状态网络）驱动**——
+> task_runtime 承载生命周期/事件流，决策模型消费空间状态产出
+> skill_sequence，ESN 提供时序上下文记忆。现有 BT/Python 状态机
+> 只是当前可跑的过渡实现。
 
 - [x] **符号空间契约**：`docs/符号空间契约.md`（TaskIntent schema +
   生命周期状态机 + 校验规则 + 事件流）
@@ -31,10 +35,14 @@
   C++ TaskRuntime 同契约，仅用于云端验证入口链路；工程形态以 C++ 为准
 - [x] **motionslam_ipc**：决策=移除。无任何调用方、Super-LIO 写入改动不在
   patches；包、依赖声明、唯一消费头文件均已删
-- [ ] **编排语义迁移到 C++ TaskRuntime**（P0）：把 Python 编排器里的
-  任务/子目标状态机（execute/return_home/recovery/slow_mode/stuck 检测）
-  用 C++ 落到 task_runtime + motionslam_pipeline，BT 退化为 navigate 技能；
-  恢复机制（plan_fail_recovery/escalate/drift）随迁
+- [ ] **决策模型 + ESN 决策层**（P0，新分支）：符号空间的任务决策由
+  决策模型 + ESN 网络驱动——输入空间状态（占据图/位姿/任务上下文），
+  输出 skill_sequence 给 task_runtime 调度；ESN 提供时序上下文记忆
+  （卡死/漂移/恢复历史进状态）。不是把现有状态机搬成 C++。
+- [ ] **状态机能力向决策模型移交**：Python 编排器的
+  execute/return_home/recovery/slow_mode/stuck 检测语义，作为决策模型的
+  安全兜底与训练/蒸馏素材保留；恢复机制（plan_fail_recovery/escalate/
+  drift）进 C++ task_runtime + motionslam_pipeline
 - [ ] **跨楼层自主探索闭环**：frontier 探索 + 恢复机制在 C++ 侧形成
   完整探索-导航-恢复循环（当前链路是 waypoints 驱动）
 - [ ] **三空间边界守护固化**：世界空间只提交意图、度量空间独占实时执行
