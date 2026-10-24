@@ -39,14 +39,13 @@
   C++ TaskRuntime 同契约，仅用于云端验证入口链路；工程形态以 C++ 为准
 - [x] **motionslam_ipc**：决策=移除。无任何调用方、Super-LIO 写入改动不在
   patches；包、依赖声明、唯一消费头文件均已删
-- [ ] **决策模型 + ESN 决策层**（P0，新分支）：符号空间的任务决策由
-  决策模型 + ESN 网络驱动——输入空间状态（占据图/位姿/任务上下文），
-  输出 skill_sequence 给 task_runtime 调度；ESN 提供时序上下文记忆
-  （卡死/漂移/恢复历史进状态）。不是把现有状态机搬成 C++。
+- [ ] **决策模型 + ESN → 迁至 [Fork Spatial Runtime](https://github.com/zxinyu-robot/fork-spatial-runtime)**：
+  语义 Token 编码与资源管理、ESN 行为时序记忆、端侧在线学习调度是跨机器人
+  （四足 / 人形 / 无人机）的通用核心，在 Fork Spatial Runtime 实现；本仓库只做
+  Go2 侧适配接入，不在本仓库实现决策层本体
 - [ ] **状态机能力向决策模型移交**：Python 编排器的
-  execute/return_home/recovery/slow_mode/stuck 检测语义，作为决策模型的
-  安全兜底与训练/蒸馏素材保留；恢复机制（plan_fail_recovery/escalate/
-  drift）进 C++ task_runtime + motionslam_pipeline
+  execute/return_home/recovery/slow_mode/stuck 检测语义保留为 Go2 侧安全兜底
+  （决策模型无效/被否决时回退）与蒸馏素材
 - [ ] **跨楼层自主探索闭环**：frontier 探索 + 恢复机制在 C++ 侧形成
   完整探索-导航-恢复循环（当前链路是 waypoints 驱动）
 - [ ] **三空间边界守护固化**：世界空间只提交意图、度量空间独占实时执行
@@ -88,6 +87,12 @@
   自动起 mock 接收端 + `with_edge_uplink:=true edge_host:=127.0.0.1`
 - [ ] **多楼层真机参数回放**：把真机 bag 灌进 vkernel 回放验证一致性
   （缺真机 bag 素材，阻塞）
+
+## 范围说明
+
+本仓库目标收敛为 **Go2 真机闭环**：A 组真机验证 + B 组状态契约 P0/P1。
+多机协同 / DDS 弱网接口暂不在本仓库做，后续按需接
+[Swarm Spatial Link](https://github.com/zxinyu-robot/swarm-spatial-link)。
 
 ## 待决策项
 
