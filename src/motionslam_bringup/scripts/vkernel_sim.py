@@ -144,6 +144,9 @@ class VKernelSim(Node):
         self.declare_parameter("blind_m", 0.5)
         # 体素降采样（m），滤掉贴地碎点噪声
         self.declare_parameter("cloud_voxel_m", 0.10)
+        # 跨楼层坡道语义：楼梯格内仅把高出本格最近层该阈值以上的点当障碍，
+        # 踏步/踢面等地形结构视为可行走面（等效真机楼梯语义分割层）
+        self.declare_parameter("ramp_obstacle_above_m", 0.55)
         # 虚拟雷达可见性：球面角度 z-buffer 取每个方向最近点（遮挡剔除），
         # 否则射线穿透墙/家具把已占据体素 raycast 清空。FOV 为 Mid-360
         # (-7°~52°) 叠加 Go2 安装俯仰 11.8° 后的近似值
@@ -221,6 +224,7 @@ class VKernelSim(Node):
             step=float(self.get_parameter("sample_step_m").value),
         )
         self._hm: Optional[tuple[np.ndarray, float, np.ndarray]] = None
+        self._ramp_mask: Optional[np.ndarray] = None
         self._scene_pts: Optional[np.ndarray] = None
         scene_file = str(self.get_parameter("scene_file").value)
         if scene_file:
@@ -235,6 +239,11 @@ class VKernelSim(Node):
                 float(data["hm_res"]),
                 data["hm_levels"].astype(float) - oz,
             )
+            self._ramp_mask = self._build_ramp_mask()
+            if self._ramp_mask is not None:
+                self.get_logger().info(
+                    f"vkernel_sim: ramp cells={int(self._ramp_mask.sum())}"
+                )
             self.get_logger().info(
                 f"vkernel_sim: scene_file={scene_file} pts={len(self._scene_pts)}"
             )
@@ -320,33 +329,144 @@ class VKernelSim(Node):
             return self._z
         return _height_at(self._x, self._y, self._ramps, self._floors)
 
+    def _build_ramp_mask(self) -> Optional[np.ndarray]:
+        """楼梯/坡道格检测（跨楼层过渡语义）：
+        1. 全图层值直方图取两个最高主层（间隔 >=1m）作为楼层基准 f_lo/f_hi；
+        2. 以相邻格间 |Δz|<=step_z 的层为可步进边，分别从 f_lo/f_hi 做 BFS
+           求 dist_lo/dist_hi；在任一最短 lo→hi 路径上（dl+dh<=最短跳数）
+           的中位层所在格 = 楼梯/坡道走廊核；
+        3. 核向外膨胀 1 格覆盖梯段全宽。
+        家具叠层不在最短过渡路径上，不会被误标。
+        返回与 hm_levels 同形的 bool 掩码；单楼层场景返回 None。"""
+        if self._hm is None:
+            return None
+        (_, _), res, levels = self._hm
+        step_z = float(self.get_parameter("step_z").value)
+        h, w, k = levels.shape
+        flat = levels[np.isfinite(levels)]
+        if flat.size == 0:
+            return None
+        lo_bin = np.floor(flat.min() * 10) / 10
+        hist, edges = np.histogram(
+            flat, bins=np.arange(lo_bin, flat.max() + 0.2, 0.1)
+        )
+        plateaus: list[float] = []
+        for i in np.argsort(hist)[::-1]:
+            z = (edges[i] + edges[i + 1]) / 2
+            if all(abs(z - p) >= 1.0 for p in plateaus):
+                plateaus.append(float(z))
+            if len(plateaus) == 2:
+                break
+        if len(plateaus) < 2:
+            return None  # 单楼层场景无过渡语义
+        f_lo, f_hi = sorted(plateaus)
+
+        from collections import deque
+
+        def bfs_dist(seed: float) -> np.ndarray:
+            dist = np.full((h, w, k), -1, dtype=np.int32)
+            q: deque[tuple[int, int, int]] = deque()
+            for cy in range(h):
+                for cx in range(w):
+                    c = levels[cy, cx]
+                    for j in np.flatnonzero(
+                        np.isfinite(c) & (np.abs(c - seed) < 0.12)
+                    ):
+                        dist[cy, cx, j] = 0
+                        q.append((cy, cx, int(j)))
+            while q:
+                cy, cx, i = q.popleft()
+                z = levels[cy, cx, i]
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if dy == 0 and dx == 0:
+                            continue
+                        y1, x1 = cy + dy, cx + dx
+                        if not (0 <= y1 < h and 0 <= x1 < w):
+                            continue
+                        c = levels[y1, x1]
+                        for j in np.flatnonzero(np.isfinite(c)):
+                            if (
+                                abs(float(c[j]) - z) <= step_z
+                                and dist[y1, x1, j] < 0
+                            ):
+                                dist[y1, x1, j] = dist[cy, cx, i] + 1
+                                q.append((y1, x1, int(j)))
+            return dist
+
+        d_lo = bfs_dist(f_lo)
+        d_hi = bfs_dist(f_hi)
+        hi_states = np.isfinite(levels) & (np.abs(levels - f_hi) < 0.12)
+        reach = d_lo[hi_states & (d_lo >= 0)]
+        if not reach.size:
+            return None  # 两层间无可步进通道
+        best = int(reach.min())
+        on_path = (d_lo >= 0) & (d_hi >= 0) & (d_lo + d_hi <= best)
+        mid = (
+            np.isfinite(levels)
+            & (levels > f_lo + 0.1)
+            & (levels < f_hi - 0.1)
+        )
+        core = (on_path & mid).any(axis=2)
+        if not core.any():
+            return None
+        # 核膨胀 1 格覆盖梯段宽度（np.roll 会环绕，改用平移或）
+        mask = np.zeros((h, w), dtype=bool)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                ys = slice(max(0, dy), min(h, h + dy))
+                xs = slice(max(0, dx), min(w, w + dx))
+                src_y = slice(max(0, -dy), min(h, h - dy))
+                src_x = slice(max(0, -dx), min(w, w - dx))
+                mask[ys, xs] |= core[src_y, src_x]
+        return mask
+
+    def _rel_to_cell_level(self, pts: np.ndarray) -> np.ndarray:
+        """每个点到其所在格“最近下方层”的相对高度；不在图内/无层的点为 NaN。"""
+        (ox, oy), res, levels = self._hm
+        rel = np.full(len(pts), np.nan, dtype=np.float64)
+        cx = ((pts[:, 0] - ox) / res).astype(np.int64)
+        cy = ((pts[:, 1] - oy) / res).astype(np.int64)
+        inside = (cy >= 0) & (cy < levels.shape[0]) & (cx >= 0) & (cx < levels.shape[1])
+        cell = cy[inside] * levels.shape[1] + cx[inside]
+        order = np.argsort(cell, kind="stable")
+        cell_s = cell[order]
+        bounds = np.flatnonzero(np.r_[True, cell_s[1:] != cell_s[:-1], True])
+        for a, b in zip(bounds[:-1], bounds[1:]):
+            cyy, cxx = divmod(int(cell_s[a]), levels.shape[1])
+            lv = np.sort(levels[cyy, cxx][np.isfinite(levels[cyy, cxx])])
+            if not lv.size:
+                continue
+            idx = order[a:b]
+            z = pts[inside][idx, 2]
+            below = np.searchsorted(lv, z, side="right") - 1
+            ok = below >= 0
+            r = np.where(ok, z - lv[np.clip(below, 0, None)], np.nan)
+            rel[np.flatnonzero(inside)[idx]] = r
+        return rel
+
     def _publish_prior_map(self) -> None:
         """全场景先验云：体素降采样后一次性 latch，供 prior 模式的全局规划。"""
         pts = self._scene_pts[:, :4]
         # 逐格按本层地面做通行高度带（先验图同样不能让地板/天花板进占据图）：
-        # 保留 z ∈ (本格最近地面 +0.08, +1.7) 的点，楼梯踏步随本格地面带保留。
+        # 保留 z ∈ (本格最近地面 +0.08, +1.7) 的点；坡道格只保留
+        # +ramp_obstacle_above_m 以上的点——踏步/踢面是地形不是障碍。
         if self._hm is not None:
             (ox, oy), res, levels = self._hm
+            rel = self._rel_to_cell_level(pts)
             cx = ((pts[:, 0] - ox) / res).astype(np.int64)
             cy = ((pts[:, 1] - oy) / res).astype(np.int64)
-            inside = (cy >= 0) & (cy < levels.shape[0]) & (cx >= 0) & (cx < levels.shape[1])
-            keep = np.zeros(len(pts), dtype=bool)
-            cell = cy[inside] * levels.shape[1] + cx[inside]
-            order = np.argsort(cell, kind="stable")
-            cell_s = cell[order]
-            bounds = np.flatnonzero(np.r_[True, cell_s[1:] != cell_s[:-1], True])
-            for a, b in zip(bounds[:-1], bounds[1:]):
-                cyy, cxx = divmod(int(cell_s[a]), levels.shape[1])
-                lv = np.sort(levels[cyy, cxx][np.isfinite(levels[cyy, cxx])])
-                if not lv.size:
-                    continue
-                idx = order[a:b]
-                z = pts[inside][idx, 2]
-                below = np.searchsorted(lv, z, side="right") - 1
-                ok = below >= 0
-                rel = z - lv[np.clip(below, 0, None)]
-                keep[np.flatnonzero(inside)[idx[ok & (rel > 0.08) & (rel < 1.7)]]] = True
-            pts = pts[keep]
+            in_map = (
+                (cy >= 0)
+                & (cy < levels.shape[0])
+                & (cx >= 0)
+                & (cx < levels.shape[1])
+            )
+            ramp = np.zeros(len(pts), dtype=bool)
+            if self._ramp_mask is not None:
+                ramp[in_map] = self._ramp_mask[cy[in_map], cx[in_map]]
+            lo = np.where(ramp, float(self.get_parameter("ramp_obstacle_above_m").value), 0.08)
+            pts = pts[(rel > lo) & (rel < 1.7)]
         key = np.floor(pts[:, :3] / 0.15).astype(np.int64)
         _, idx = np.unique(key, axis=0, return_index=True)
         band = pts[np.sort(idx)]
@@ -399,6 +519,25 @@ class VKernelSim(Node):
         band = self._visible_points()
         rel = band[:, 2] - surface_z
         band = band[(rel > 0.10) & (rel < 1.60)]
+        # 坡道语义：楼梯格内踏步/踢面（本格最近层 +ramp_obstacle_above_m 以内）
+        # 视为地形而非障碍——否则楼梯在 2D 占据图里天然是障碍，跨楼层不可达。
+        if self._ramp_mask is not None and len(band):
+            (ox, oy), res2, levels = self._hm
+            cx = ((band[:, 0] - ox) / res2).astype(np.int64)
+            cy = ((band[:, 1] - oy) / res2).astype(np.int64)
+            in_map = (
+                (cy >= 0)
+                & (cy < levels.shape[0])
+                & (cx >= 0)
+                & (cx < levels.shape[1])
+            )
+            ramp_idx = np.zeros(len(band), dtype=bool)
+            ramp_idx[in_map] = self._ramp_mask[cy[in_map], cx[in_map]]
+            if ramp_idx.any():
+                cell_rel = self._rel_to_cell_level(band)
+                above = float(self.get_parameter("ramp_obstacle_above_m").value)
+                keep = ~ramp_idx | (np.isnan(cell_rel) | (cell_rel > above))
+                band = band[keep]
         vox = float(self.get_parameter("cloud_voxel_m").value)
         if vox > 0.0 and len(band):
             key = np.floor(band[:, :3] / vox).astype(np.int64)
