@@ -12,12 +12,34 @@ Unitree Go2 + Mid-360 端侧**跨楼层自主探索导航**（ROS 2 Humble）：
 
 ## 真机部署规范
 
-- 硬件：Jetson Orin NX + Unitree Go2 + Livox Mid-360；软件：ROS 2 Humble（Docker）
-- 分支：`main` = 稳定基线（真机发布只走 main），`dev` = 开发主线
-- 第三方依赖按 [THIRD_PARTY.md](THIRD_PARTY.md) 的 pin 手动拉取（`.gitmodules` 无 gitlink）
-- 导航参数以 `src/motionslam_bringup/config/demo_scan_planner.yaml` 为真机基线；云端 overlay `demo_scan_planner_cloud.yaml` 仅放宽动力学与障碍 z 过滤，不得回灌真机
-- 跨楼层部署前需评估 SCAN 障碍高度过滤（真机 `obstacle_height_max=1.50` 相对地面，建议改相对机器人/分层地图）
-- 玻璃/透明障碍：仅保留类别无关的 `virtual_obstacle_merge` 管道，玻璃专用策略按规划文档已移除
+环境：Jetson Orin NX + Unitree Go2 + Livox Mid-360，ROS 2 Humble（Docker，host 网络直通狗域 0）。
+
+```bash
+# 1. 拉代码与第三方依赖（按 THIRD_PARTY.md 的 pin）
+git clone --recursive https://github.com/zxinyu-robot/MotionSLAM_ws.git
+cd MotionSLAM_ws
+git submodule update --init   # gitlink 已注册；如所在分支无 gitlink，按
+                            # THIRD_PARTY.md 手动 clone + checkout 到 pin
+# 2. 构建镜像（Jetson 上，arm64 清华源已在 Dockerfile 内配好）
+docker build -t motionslam:humble docker/
+# 3. 雷达配置（填现场 Mid-360 IP）
+cp MID360_config.example.json MID360_config.json
+# 4. 编译（容器内）：主工作区 + SCAN-Planner 工作区（需先打 patches/）
+./docker/run_container.sh
+./scripts/dev/build_ws.sh                 # 主 colcon 工作区
+# scan_planner_ws：clone SCAN-Planner → apply patches/scan-planner-motionslam.patch → colcon build
+# 5. 日常运行（一条入口）
+./scripts/motionslam nav start            # 起容器 + 起 Demo 栈
+./scripts/motionslam nav watch            # 看 /demo/mission/event 关键事件
+./scripts/motionslam nav stop             # 急停并停栈
+```
+
+注意事项：
+- **系统时间**：Jetson 时钟停在 1970 会让 apt/gmake 失败，`build_ws.sh` 会拦截——先在宿主机修 NTP（`scripts/ops/fix_system_time.sh`）
+- **环境变量**：`GO2_IP`（狗 IP）、`EDGE_HOST`（边端）、`DEMO_PROFILE=demo_short`、`WITH_FOXGLOVE/WITH_EDGE_UPLINK/...` 开关见 `scripts/nav/start_demo_scan_nav.sh`
+- **参数基线**：真机以 `config/demo_scan_planner.yaml` 为准；云端 overlay `demo_scan_planner_cloud.yaml` 放宽了动力学与障碍 z 过滤（`obstacle_height_max` 1.5→3.0），**不得回灌真机**
+- **跨楼层**：真机 `obstacle_height_max=1.50` 相对地面会滤掉楼上墙体，跨楼层部署前需改相对机器人/分层地图
+- **透明障碍**：仅保留类别无关 `virtual_obstacle_merge` 管道，玻璃专用策略已按规划文档移除
 
 ## 云端闭环演示
 
