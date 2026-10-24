@@ -108,6 +108,45 @@ void test_liveness() {
   assert(reg.liveness("ghost", 0) == PluginLiveness::kUnregistered);
 }
 
+void test_descriptor_pointer_stable_across_add() {
+  PluginRegistry reg;
+  auto a = make_plugin("a", PluginKind::kSource, PluginAuthority::kEvidence);
+  a.provides = {"pose"};
+  assert(reg.add(a) == RegisterResult::kRegistered);
+  const PluginDescriptor* saved = reg.find("a");
+  // register many more plugins; the saved pointer must stay valid
+  for (int i = 0; i < 50; ++i) {
+    auto extra = make_plugin((std::string("x") + std::to_string(i)).c_str(),
+                             PluginKind::kCustom, PluginAuthority::kEvidence);
+    assert(reg.add(extra) == RegisterResult::kRegistered);
+  }
+  assert(saved == reg.find("a"));
+  assert(saved->plugin_id == "a");
+  // removing a different plugin keeps it valid too
+  assert(reg.remove("x0"));
+  assert(saved->plugin_id == "a");
+}
+
+void test_late_report_does_not_revive() {
+  PluginRegistry reg;
+  auto m = make_plugin("m", PluginKind::kSource, PluginAuthority::kEvidence);
+  m.health_interval_ns = 100;
+  assert(reg.add(m) == RegisterResult::kRegistered);
+  assert(reg.remove("m"));
+  // late heartbeat for the removed instance is ignored
+  reg.report_health("m", true, "late ok", 1000);
+  assert(reg.add(m) == RegisterResult::kRegistered);
+  // replacement has not reported yet -> stale, not live
+  assert(reg.liveness("m", 1001) == PluginLiveness::kStale);
+  // reports before registration are ignored entirely
+  PluginRegistry reg2;
+  reg2.report_health("m", true, "early", 500);
+  auto m2 = make_plugin("m", PluginKind::kSource, PluginAuthority::kEvidence);
+  m2.health_interval_ns = 100;
+  assert(reg2.add(m2) == RegisterResult::kRegistered);
+  assert(reg2.liveness("m", 501) == PluginLiveness::kStale);
+}
+
 }  // namespace
 
 int main() {
@@ -116,5 +155,7 @@ int main() {
   test_invalid_descriptor_rejected();
   test_remove_recomputes_provided();
   test_liveness();
+  test_descriptor_pointer_stable_across_add();
+  test_late_report_does_not_revive();
   return 0;
 }

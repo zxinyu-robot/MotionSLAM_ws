@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -83,12 +84,15 @@ class PluginRegistry final {
                           std::int64_t now_ns) const;
   const PluginHealth* health(const std::string& plugin_id) const;
 
+  // Descriptor and health pointers returned by find/providers/health stay
+  // valid across add/remove of OTHER ids (std::map has stable references);
+  // they die only when that plugin itself is removed.
  private:
   static bool is_valid(const PluginDescriptor& descriptor) noexcept;
 
-  std::vector<PluginDescriptor> plugins_;
+  std::map<std::string, PluginDescriptor> plugins_;
   std::set<std::string> provided_;
-  std::vector<std::pair<std::string, PluginHealth>> health_;
+  std::map<std::string, PluginHealth> health_;
 };
 
 }  // namespace motionslam::runtime

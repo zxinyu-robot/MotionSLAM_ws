@@ -25,54 +25,39 @@ RegisterResult PluginRegistry::add(PluginDescriptor descriptor) {
   for (const auto& cap : descriptor.provides) {
     provided_.insert(cap);
   }
-  plugins_.push_back(std::move(descriptor));
+  const auto id = descriptor.plugin_id;
+  plugins_.emplace(id, std::move(descriptor));
   return RegisterResult::kRegistered;
 }
 
 bool PluginRegistry::remove(const std::string& plugin_id) {
-  const auto it = std::find_if(plugins_.begin(), plugins_.end(),
-                               [&](const PluginDescriptor& d) {
-                                 return d.plugin_id == plugin_id;
-                               });
+  const auto it = plugins_.find(plugin_id);
   if (it == plugins_.end()) {
     return false;
   }
 
+  plugins_.erase(it);
+  health_.erase(plugin_id);
+
   provided_.clear();
-  for (const auto& d : plugins_) {
-    if (d.plugin_id == plugin_id) {
-      continue;
-    }
+  for (const auto& [id, d] : plugins_) {
     for (const auto& cap : d.provides) {
       provided_.insert(cap);
     }
   }
-
-  const auto h = std::find_if(health_.begin(), health_.end(),
-                              [&](const auto& entry) {
-                                return entry.first == plugin_id;
-                              });
-  if (h != health_.end()) {
-    health_.erase(h);
-  }
-  plugins_.erase(it);
   return true;
 }
 
 const PluginDescriptor* PluginRegistry::find(
     const std::string& plugin_id) const {
-  for (const auto& d : plugins_) {
-    if (d.plugin_id == plugin_id) {
-      return &d;
-    }
-  }
-  return nullptr;
+  const auto it = plugins_.find(plugin_id);
+  return it == plugins_.end() ? nullptr : &it->second;
 }
 
 std::vector<const PluginDescriptor*> PluginRegistry::providers(
     const std::string& capability) const {
   std::vector<const PluginDescriptor*> out;
-  for (const auto& d : plugins_) {
+  for (const auto& [id, d] : plugins_) {
     if (std::find(d.provides.begin(), d.provides.end(), capability) !=
         d.provides.end()) {
       out.push_back(&d);
@@ -84,7 +69,7 @@ std::vector<const PluginDescriptor*> PluginRegistry::providers(
 std::vector<const PluginDescriptor*> PluginRegistry::plugins() const {
   std::vector<const PluginDescriptor*> out;
   out.reserve(plugins_.size());
-  for (const auto& d : plugins_) {
+  for (const auto& [id, d] : plugins_) {
     out.push_back(&d);
   }
   return out;
@@ -92,13 +77,12 @@ std::vector<const PluginDescriptor*> PluginRegistry::plugins() const {
 
 void PluginRegistry::report_health(const std::string& plugin_id, bool ok,
                                    std::string reason, std::int64_t now_ns) {
-  for (auto& [id, h] : health_) {
-    if (id == plugin_id) {
-      h = PluginHealth{ok, std::move(reason), now_ns};
-      return;
-    }
+  // Reports only count for a currently registered plugin: a late heartbeat
+  // arriving after removal must not validate a future re-registration.
+  if (plugins_.find(plugin_id) == plugins_.end()) {
+    return;
   }
-  health_.emplace_back(plugin_id, PluginHealth{ok, std::move(reason), now_ns});
+  health_[plugin_id] = PluginHealth{ok, std::move(reason), now_ns};
 }
 
 PluginLiveness PluginRegistry::liveness(const std::string& plugin_id,
@@ -122,12 +106,8 @@ PluginLiveness PluginRegistry::liveness(const std::string& plugin_id,
 
 const PluginHealth* PluginRegistry::health(
     const std::string& plugin_id) const {
-  for (const auto& [id, h] : health_) {
-    if (id == plugin_id) {
-      return &h;
-    }
-  }
-  return nullptr;
+  const auto it = health_.find(plugin_id);
+  return it == health_.end() ? nullptr : &it->second;
 }
 
 }  // namespace motionslam::runtime
