@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""task_runtime 的 Python 适配层（与 C++ TaskRuntime 同契约）。
+"""task_runtime 的 Python 适配层（与 C++ TaskRuntime 同契约，过渡形态）。
 
-目标架构第一步：符号空间的任务生命周期先在这里落地，
-thin_harness / 编排层统一走这个接口；后续 C++ TaskRuntime
-接管时调用方不变，只换实现。字段与状态机严格对齐
-runtime/task_runtime/include/motionslam_runtime/task_runtime.hpp。
+项目面向工程落地，编排/运行时/恢复机制的权威实现在 C++ 侧
+（runtime/task_runtime）。本适配层仅用于云端验证"任务意图→生命周期→
+终态反馈"入口链路，字段与状态机严格对齐
+runtime/task_runtime/include/motionslam_runtime/task_runtime.hpp；
+工程形态迁移后由 C++ TaskRuntime 接管，调用方接口不变。
 """
 
 from __future__ import annotations
