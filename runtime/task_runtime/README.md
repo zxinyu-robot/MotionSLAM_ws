@@ -54,6 +54,22 @@ Registration failures: `kInvalidDescriptor`, `kDuplicateId`, `kUnresolvedRequire
 
 Advice from an unregistered plugin or an Evidence-level plugin is rejected, as is advice older than the last accepted one; advice older than 2x the health interval is treated as stale.
 
+## FSR contract bridge and fault drills (optional)
+
+`contract_bridge.hpp` connects the FSR contract ([fork-spatial-runtime](https://github.com/zxinyu-robot/fork-spatial-runtime) `contract/spatial_state.h`) to the runtime. Built only with `-DMOTIONSLAM_WITH_FSR=ON` (requires `MOTIONSLAM_WITH_LNR=ON`); FSR is fetched at a pinned commit (set `FETCHCONTENT_SOURCE_DIR_FORK_SPATIAL_RUNTIME` to use a local checkout).
+
+- `to_recovery_input(LocalizationHealth, now_ns)` feeds the contract health, including its relocalization progress fields (`candidate_found` / `alignment_complete` / `alignment_success`), into the LNR plugin. Tracking is valid in `Normal3D` / `Degraded2D` / `Verifying` (LNR counts verification frames while the `ContractGate` still holds), invalid in `Relocalizing` / `Hold`.
+- `ContractGate` is the BT-hub side of `admit()` and `dispose(lease)`. It drives only the `contract` safety source and never resumes a task:
+
+| Contract result | Runtime effect |
+| --- | --- |
+| admit `Accept` + lease `Accept` | `contract` source back to `NORMAL` |
+| admit `Reverify` / `Hold`, lease `StateMismatch` | `HOLD`, task kept |
+| admit `Reject` | `HOLD` + fail with `name(reason)` (e.g. `asset_stale`) |
+| lease `Expired` / `DeadlineMissed` / `StaleEpoch` / `WrongRobot` / `ClockMismatch` | `HOLD` + fail (`lease_expired`, `deadline_missed`, `lease_stale_epoch`, ...) |
+
+`tests/fault_drill_tests.cpp` drives FSR `inject()` steps through `ContractGate` and the LNR `RecoveryPluginHost` + `RecoveryArbiter` into `TaskRuntime` on 100 ms ticks. Covered faults: localization lost (immediate contract hold → LNR search → relocalize → resume, plus a timeout case that ends in `RelocalizationTimeout`), short dropout, pose jump, generation bump, localization-epoch bump with and without pose-anchored state, link loss (task keeps running), lease expired / deadline missed / stale owner epoch, and an e-stop that outlives the gate.
+
 ## Build and test
 
 ```bash
@@ -63,4 +79,7 @@ ctest --test-dir build/runtime-task --output-on-failure
 
 # with the LNR recovery bridge
 cmake -S runtime/task_runtime -B build/runtime-task -DMOTIONSLAM_WITH_LNR=ON
+
+# with the FSR contract bridge and fault drills
+cmake -S runtime/task_runtime -B build/runtime-task -DMOTIONSLAM_WITH_LNR=ON -DMOTIONSLAM_WITH_FSR=ON
 ```
