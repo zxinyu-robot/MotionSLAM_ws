@@ -69,14 +69,18 @@ ArbiterDecision RecoveryArbiter::apply(const PluginRegistry& registry,
       d->authority != PluginAuthority::kAdvice) {
     return ArbiterDecision::kRejected;
   }
+  // A silent plugin forces HOLD before any other check, so queued or
+  // reordered advice can never keep a task running past its heartbeat.
+  if (registry.liveness(advice.plugin_id, now_ns) != PluginLiveness::kLive) {
+    last_reason_ = "recovery_plugin_stale";
+    set_mode(runtime, SafetyMode::kHold);
+    return ArbiterDecision::kStaleFailSafe;
+  }
   if (last_stamp_ns_ && advice.stamp_ns < *last_stamp_ns_) {
     return ArbiterDecision::kRejected;
   }
-
-  const bool advice_stale = d->health_interval_ns > 0 &&
-                            now_ns - advice.stamp_ns > 2 * d->health_interval_ns;
-  if (advice_stale ||
-      registry.liveness(advice.plugin_id, now_ns) != PluginLiveness::kLive) {
+  if (d->health_interval_ns > 0 &&
+      now_ns - advice.stamp_ns > 2 * d->health_interval_ns) {
     last_reason_ = "recovery_plugin_stale";
     set_mode(runtime, SafetyMode::kHold);
     return ArbiterDecision::kStaleFailSafe;

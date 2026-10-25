@@ -259,6 +259,25 @@ void test_advice_ordering_and_freshness() {
   assert(rt.safety_mode() == SafetyMode::kHold);
 }
 
+// Expired heartbeat holds even when the queued advice is out of order.
+void test_stale_plugin_checked_before_ordering() {
+  PluginRegistry reg;
+  reg.add(health_source());
+  RecoveryPluginHost host(reg, {}, 100 * kMs);
+  host.attach();
+  TaskRuntime rt;
+  RecoveryArbiter arb;
+  start_task(rt, "t9");
+  host.update(frame(100), 100 * kMs);
+  assert(arb.apply(reg, advice_at(host, lnr::RecoveryAuthority::Full, 100 * kMs),
+                   rt, 100 * kMs) == ArbiterDecision::kNoChange);
+  const auto queued = advice_at(host, lnr::RecoveryAuthority::Full, 50 * kMs);
+  assert(arb.apply(reg, queued, rt, 600 * kMs) ==
+         ArbiterDecision::kStaleFailSafe);
+  assert(rt.safety_mode() == SafetyMode::kHold);
+  assert(rt.active_task()->status == TaskStatus::kHolding);
+}
+
 }  // namespace
 
 int main() {
@@ -271,5 +290,6 @@ int main() {
   test_foreign_hold_survives_recovery_clear();
   test_revoked_under_foreign_mode();
   test_advice_ordering_and_freshness();
+  test_stale_plugin_checked_before_ordering();
   return 0;
 }
