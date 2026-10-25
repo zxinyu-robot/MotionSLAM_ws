@@ -24,6 +24,18 @@ ACCEPTED -> RUNNING -> SUCCEEDED
 
 The core stores execution policy fields but does not yet enforce deadlines, priority, or preemption. Task IDs are process-local and are not durable across restart.
 
+## Plugin registry
+
+`plugin_registry.hpp` defines the registration contract for runtime plugins (FSR components ①–⑥, LNR recovery, sources, transport). A plugin declares:
+
+- `plugin_id` / `name` / `interface_version` — identity.
+- `kind` — source, contract, token, memory, policy, recovery, transport, or custom.
+- `authority` — `kEvidence` (observational data) or `kAdvice` (a suggested decision). Plugins can never hold execution authority; their output to the BT hub is only ever a candidate that the BT and safety layer may accept or reject.
+- `provides` / `needs` — capability strings; `needs` must already be provided by registered plugins or registration fails with `kUnresolvedRequires`.
+- `health_interval_ns` — if non-zero the plugin must report health within 2x the interval to stay `kLive`; no interval means always live once registered.
+
+Registration failures: `kInvalidDescriptor`, `kDuplicateId`, `kUnresolvedRequires`. Removing a plugin recomputes the provided-capability set, so dependents can no longer register against a removed provider.
+
 ## Build and test
 
 ```bash

@@ -44,5 +44,5 @@ frames_*.pdf
 
 # export 文件夹
 export/
-# 数据集下载目录 (Elevator-LIO, hf download 产物)
+# 数据集 (大文件不入库)
 datasets/
