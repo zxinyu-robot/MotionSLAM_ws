@@ -344,9 +344,9 @@ class VKernelSim(Node):
         msg.pose.pose.position.z = self._z
         msg.pose.pose.orientation.z = math.sin(self._yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(self._yaw / 2.0)
-        msg.twist.twist.linear.x = self._vx
-        msg.twist.twist.linear.y = self._vy
-        msg.twist.twist.angular.z = self._vyaw
+        msg.twist.twist.linear.x = vx
+        msg.twist.twist.linear.y = vy
+        msg.twist.twist.angular.z = vyaw
         self._odom_pub.publish(msg)
         self._publish_terrain_obs()
 
