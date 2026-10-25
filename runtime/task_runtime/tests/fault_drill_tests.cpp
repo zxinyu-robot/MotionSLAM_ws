@@ -97,11 +97,32 @@ void test_mapping() {
   assert(in.quality == 0.4 && in.pose_jump_m == 0.2 && in.alignment_fitness == 0.1);
   assert(in.healthy_frames == 2 && !in.stance_ok);
   assert(in.descriptor_candidate_found && !in.alignment_complete);
-  for (auto m : {fsc::LocalizationMode::Relocalizing,
-                 fsc::LocalizationMode::Verifying, fsc::LocalizationMode::Hold}) {
+  for (auto m : {fsc::LocalizationMode::Relocalizing, fsc::LocalizationMode::Hold}) {
     h.mode = m;
     assert(!to_recovery_input(h, 0).tracking_valid);
   }
+  h.mode = fsc::LocalizationMode::Verifying;
+  assert(to_recovery_input(h, 0).tracking_valid);
+}
+
+// source reports Verifying after alignment: LNR counts the verification
+// frames instead of falling back to Searching; the contract keeps holding
+// until Normal3D, then the BT resumes.
+void test_verifying_counts_without_failing() {
+  Rig r;
+  r.step(FaultKind::LocalizationLost);
+  r.ticks(6);
+  r.world.header.health.mode = fsc::LocalizationMode::Verifying;
+  r.world.header.health.reason = fsc::ReasonCode::None;
+  r.ticks(5, kRelocalized);  // Aligning -> Verifying -> 3 healthy frames
+  assert(r.rt.safety_source(RecoveryArbiter::kSafetySource) == SafetyMode::kNormal);
+  assert(r.rt.safety_source(ContractGate::kSafetySource) == SafetyMode::kHold);
+  assert(r.status() == TaskStatus::kHolding);
+  r.ticks(30);  // well past search_timeout_ms: no relocalization timeout
+  assert(r.status() == TaskStatus::kHolding);
+  r.step(FaultKind::Recover);
+  assert(r.gate_decision == GateDecision::kAccept);
+  assert(r.rt.resume());
 }
 
 // lost: contract holds at once; LNR confirms the loss and searches; after
@@ -234,6 +255,7 @@ int main() {
   test_mapping();
   test_loss_hold_then_resume();
   test_loss_timeout_fails();
+  test_verifying_counts_without_failing();
   test_short_dropout_needs_explicit_resume();
   test_pose_jump();
   test_generation_bump_fails();

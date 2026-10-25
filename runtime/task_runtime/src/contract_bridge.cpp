@@ -22,7 +22,10 @@ lnr::RecoveryInput to_recovery_input(const fsc::LocalizationHealth& health,
   in.alignment_fitness = health.alignment_fitness;
   in.healthy_frames = health.healthy_frames;
   in.stance_ok = health.stance_ok;
-  in.tracking_valid = health.usable();
+  // Verifying frames are valid tracking for LNR's healthy-frame count; the
+  // ContractGate still holds execution until the health is usable().
+  in.tracking_valid = health.mode != fsc::LocalizationMode::Relocalizing &&
+                      health.mode != fsc::LocalizationMode::Hold;
   in.descriptor_candidate_found = progress.candidate_found;
   in.alignment_complete = progress.alignment_complete;
   in.alignment_success = progress.alignment_success;
