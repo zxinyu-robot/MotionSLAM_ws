@@ -109,3 +109,21 @@ docker exec -d motionslam-cloud bash -lc \
   AABB 尺寸的接力由 lookahead 窗口自然形成，不需要学习模型切航点。
 
 语义/编排层只影响候选偏好与恢复选择，几何层（PCT/SCAN 占据判定）始终有权否决。
+
+## 地形安全约束（legged-terrain-state）
+
+底层运动约束采用 vendored 的 [legged-terrain-state](https://github.com/zxinyu-robot/legged-terrain-state)（`third_party/legged_terrain_state`，MIT）：
+
+```
+vkernel / 真机感知 ──/terrain/observation──▶ terrain_safety_node ──/terrain/decision──▶ cmd_vel_forwarder
+   (TerrainObservation)                       (LTS TerrainAssessor)   (TerrainDecision)     (施加 safety_mode)
+```
+
+- 感知只产出观测（支撑高度/法向/粗糙度/支撑点数），不指挥运动；评估节点按坡度、粗糙度、支撑置信度给出
+  `risk`（Nominal/Caution/Critical）与 `safety_mode`（Normal/ReduceSpeed/HoldPosition），故障位与 LTS `FaultFlag` 一致。
+- forwarder：`ReduceSpeed` 速度乘 `reduce_speed_factor`（默认 0.4），`HoldPosition` 置零；
+  从未收到决策视为无地形感知（放行），收到后超过 `terrain_decision_timeout_ms`（默认 1500）未更新则 fail-safe 停车。
+- 评估节点观测超时（`obs_timeout_ms`，默认 1000）主动发 `Stale + Critical + HoldPosition`。
+- vkernel 观测：高程图邻域（`terrain_obs_radius`，默认 0.6 m）平面拟合得法向，残差 RMS 作粗糙度，
+  支撑层 ±step_z/2 内场景点计数作支撑点（`terrain_expected_points` 为期望值）；无高程图时给平地名义观测。
+- `terrain_safety_enabled:=false` 可在 forwarder 侧关闭该约束。
