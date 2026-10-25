@@ -5,6 +5,7 @@
 // Python 编排器继续作为默认兜底；本节点是 C++ 对齐验证路径。
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <deque>
 #include <memory>
 #include <string>
@@ -316,14 +317,22 @@ private:
         if (pts.size() <= 2) return pts;
         std::vector<std::pair<double, double>> out{pts.front()};
         for (std::size_t i = 1; i + 1 < pts.size(); ++i) {
+            // 与 return_home.decimate_collinear_xy 同判据：b 到弦 a→c 的垂距 > eps 才算拐角；
+            // 弦退化（a≈c）或 a→b→c 方向反转（往返）时保留 b，零长段（b≈a）丢弃。
+            constexpr double kEps = 0.02;
             const auto& a = out.back();
             const auto& b = pts[i];
             const auto& c = pts[i + 1];
             const double ux = b.first - a.first, uy = b.second - a.second;
             const double vx = c.first - b.first, vy = c.second - b.second;
-            const double cross = std::abs(ux * vy - uy * vx);
-            const double lenu = std::hypot(ux, uy), lenv = std::hypot(vx, vy);
-            if (cross > 1e-4 * lenu * lenv || lenu > 1e-9 || lenv > 1e-9) {
+            const double lenu = std::hypot(ux, uy);
+            if (lenu < 1e-9) continue;
+            const double dx = c.first - a.first, dy = c.second - a.second;
+            const double chord = std::hypot(dx, dy);
+            const bool reversal = ux * vx + uy * vy < 0.0;
+            const bool corner = chord < 1e-9 ? lenu > kEps
+                                             : std::abs(ux * dy - uy * dx) / chord > kEps;
+            if (corner || reversal) {
                 out.push_back(b);
             }
         }
@@ -331,12 +340,41 @@ private:
         return out;
     }
 
+    static std::string json_escape(const std::string& in) {
+        std::string out;
+        out.reserve(in.size());
+        for (const char ch : in) {
+            switch (ch) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (static_cast<unsigned char>(ch) < 0x20) {
+                        char buf[8];
+                        std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
+                        out += buf;
+                    } else {
+                        out += ch;
+                    }
+            }
+        }
+        return out;
+    }
+
+    static std::string terminal_event(const std::string& reason) {
+        if (reason.rfind("succeeded", 0) == 0) return "mission_succeeded";
+        if (reason.rfind("canceled", 0) == 0) return "mission_canceled";
+        return "mission_failed";
+    }
+
     void emit_event(const std::string& ev, const std::string& detail = "", long idx = -1) {
         std_msgs::msg::String m;
         m.data = "{\"event\":\"" + ev + "\",\"adapter\":\"fsr\",\"map_mode\":\"" +
                  map_mode_ + "\",\"subgoal_index\":" +
                  std::to_string(idx >= 0 ? idx : (long)orchestrator_->current_subgoal()) +
-                 (detail.empty() ? "" : ",\"detail\":\"" + detail + "\"") + "}";
+                 (detail.empty() ? "" : ",\"detail\":\"" + json_escape(detail) + "\"") + "}";
         event_pub_->publish(m);
         std_msgs::msg::String s;
         s.data = "{\"event\":\"" + ev + "\",\"adapter\":\"fsr\",\"status\":\"" +
@@ -411,9 +449,7 @@ private:
                 emit_event("recovery_wait", cmd.reason);
                 break;
             case fm::CommandType::MissionTerminal:
-                emit_event(cmd.reason.rfind("succeeded", 0) == 0 ? "mission_succeeded"
-                                                                 : "mission_terminal",
-                           cmd.reason);
+                emit_event(terminal_event(cmd.reason), cmd.reason);
                 break;
             case fm::CommandType::SlowModeOn:
             case fm::CommandType::SlowModeOff:

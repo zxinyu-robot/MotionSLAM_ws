@@ -25,7 +25,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
 
-from motionslam_msgs.msg import MotionCommand, TerrainObservation
+from motionslam_msgs.msg import MotionCommand, TerrainDecision, TerrainObservation
 
 try:
     from unitree_api.msg import Request as SportRequest
@@ -33,11 +33,19 @@ except Exception:  # pragma: no cover - unitree 消息缺失时跳过虚拟 Spor
     SportRequest = None
 
 
-def _walls_from_params(raw) -> list[tuple[float, ...]]:
-    # ROS 参数不支持嵌套数组：walls 为扁平 [x1,y1,x2,y2,z0, ...]
-    # 兼容旧 4 元组（z0=0）：长度被 5 整除按 5 元组，否则按 4 元组
+def _walls_from_params(raw, stride: int = 0) -> list[tuple[float, ...]]:
+    # ROS 参数不支持嵌套数组：walls 为扁平 [x1,y1,x2,y2,z0, ...]（wall_stride=5）
+    # 或旧 4 元组 [x1,y1,x2,y2]（wall_stride=4，z0=0）。stride=0 时按长度推断，
+    # 长度同时被 4 和 5 整除（歧义）直接报错，要求显式给 wall_stride。
     flat = [float(v) for v in (raw or [])]
-    stride = 5 if len(flat) % 5 == 0 else 4
+    if stride not in (0, 4, 5):
+        raise ValueError(f"wall_stride must be 4 or 5, got {stride}")
+    if stride == 0:
+        if len(flat) >= 20 and len(flat) % 20 == 0:
+            raise ValueError(
+                f"walls length {len(flat)} is ambiguous (4/5-tuple); set wall_stride explicitly"
+            )
+        stride = 5 if len(flat) % 5 == 0 else 4
     walls = []
     for i in range(0, len(flat) - stride + 1, stride):
         item = tuple(flat[i : i + stride])
@@ -128,6 +136,7 @@ class VKernelSim(Node):
         self.declare_parameter("motion_command_topic", "/cmd_vel")
         self.declare_parameter("sport_request_topic", "/api/sport/request")
         self.declare_parameter("walls", [0.0])
+        self.declare_parameter("wall_stride", 0)
         self.declare_parameter("pillars", [0.0])
         self.declare_parameter("floors", [0.0])
         self.declare_parameter("ramps", [0.0])
@@ -154,6 +163,11 @@ class VKernelSim(Node):
         # 地形观测（/terrain/observation）：支撑面采样半径与期望点数
         self.declare_parameter("terrain_obs_radius", 0.6)
         self.declare_parameter("terrain_expected_points", 200)
+        # 虚拟执行器同样服从 /terrain/decision（与 cmd_vel_forwarder 同语义）：
+        # 云端 mock 直接积分 /cmd_vel，不经 forwarder，故在执行器侧施加同一约束
+        self.declare_parameter("terrain_actuator_gate", True)
+        self.declare_parameter("terrain_decision_timeout_s", 1.5)
+        self.declare_parameter("reduce_speed_factor", 0.4)
 
         self._world = str(self.get_parameter("world_frame").value)
         self._body = str(self.get_parameter("body_frame").value)
@@ -190,6 +204,12 @@ class VKernelSim(Node):
         self._terrain_pub = self.create_publisher(
             TerrainObservation, "/terrain/observation", qos
         )
+        self._terrain_mode = TerrainDecision.MODE_NORMAL
+        self._terrain_stamp: Optional[float] = None
+        if bool(self.get_parameter("terrain_actuator_gate").value):
+            self.create_subscription(
+                TerrainDecision, "/terrain/decision", self._on_terrain_decision, 10
+            )
         # 主执行出口：closed_loop_controller → /cmd_vel (Twist)
         self.create_subscription(
             Twist,
@@ -216,7 +236,10 @@ class VKernelSim(Node):
                 sport_qos,
             )
 
-        walls = _walls_from_params(list(self.get_parameter("walls").value))
+        walls = _walls_from_params(
+            list(self.get_parameter("walls").value),
+            int(self.get_parameter("wall_stride").value),
+        )
         pillars = _pillars_from_params(list(self.get_parameter("pillars").value))
         self._floors = _zones_from_params(list(self.get_parameter("floors").value), 5)
         self._ramps = _zones_from_params(list(self.get_parameter("ramps").value), 7)
@@ -270,6 +293,23 @@ class VKernelSim(Node):
         self._vyaw = float(msg.yaw_rate)
         self._last_cmd_mono = self.get_clock().now().nanoseconds * 1e-9
 
+    def _on_terrain_decision(self, msg: TerrainDecision) -> None:
+        self._terrain_mode = int(msg.safety_mode)
+        self._terrain_stamp = self.get_clock().now().nanoseconds * 1e-9
+
+    def _terrain_scale(self, now: float) -> float:
+        """执行器速度系数：从未收到决策=1（无地形感知放行）；决策超时=0（fail-safe）。"""
+        if self._terrain_stamp is None:
+            return 1.0
+        timeout = float(self.get_parameter("terrain_decision_timeout_s").value)
+        if now - self._terrain_stamp > timeout:
+            return 0.0
+        if self._terrain_mode == TerrainDecision.MODE_HOLD_POSITION:
+            return 0.0
+        if self._terrain_mode == TerrainDecision.MODE_REDUCE_SPEED:
+            return float(self.get_parameter("reduce_speed_factor").value)
+        return 1.0
+
     def _on_sport_request(self, msg) -> None:
         ident = getattr(msg, "header", None)
         api = getattr(msg, "parameter", "")
@@ -287,10 +327,12 @@ class VKernelSim(Node):
         self._last_odom_mono = now
         if self._last_cmd_mono and now - self._last_cmd_mono > self._cmd_timeout:
             self._vx = self._vy = self._vyaw = 0.0
+        k = self._terrain_scale(now)
+        vx, vy, vyaw = self._vx * k, self._vy * k, self._vyaw * k
         c, s = math.cos(self._yaw), math.sin(self._yaw)
-        self._x += (self._vx * c - self._vy * s) * dt
-        self._y += (self._vx * s + self._vy * c) * dt
-        self._yaw = math.atan2(math.sin(self._yaw + self._vyaw * dt), math.cos(self._yaw + self._vyaw * dt))
+        self._x += (vx * c - vy * s) * dt
+        self._y += (vx * s + vy * c) * dt
+        self._yaw = math.atan2(math.sin(self._yaw + vyaw * dt), math.cos(self._yaw + vyaw * dt))
         self._z = self._ground_z()
 
         msg = Odometry()

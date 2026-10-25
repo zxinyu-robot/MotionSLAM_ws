@@ -318,6 +318,7 @@ def _setup(context, *args, **kwargs):
                     "inflate_m": 0.05,
                     # 目标落在不可达小房间时吸附到最近可达格（语义：尽量靠近）
                     "max_goal_snap_m": 1.2,
+                    "explored_areas_latched": map_mode == "prior",
                 }],
                 remappings=[
                     ("explored_areas", pct_cloud_topic),

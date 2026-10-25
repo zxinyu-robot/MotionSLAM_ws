@@ -247,7 +247,11 @@ class ThinHarnessNode(Node):
             "subgoal_total": body.get("subgoal_total"),
             "skill_index": self._skill_index,
         }
-        if event == "mission_succeeded":
+        if event == "mission_succeeded" or (
+            event == "return_home_done" and self._active_skill_name() == "ReturnHome"
+        ):
+            if event == "return_home_done":
+                self._push_feedback(event, progress=progress, detail=str(body.get("detail", "")))
             self._skill_index += 1
             self._dispatch_skill()
             return
@@ -267,6 +271,13 @@ class ThinHarnessNode(Node):
             "plan_fail_hold",
         ):
             self._push_feedback(event, progress=progress, detail=str(body.get("detail", "")))
+
+    def _active_skill_name(self) -> str:
+        with self._lock:
+            intent = self._intent
+            if intent is None or self._skill_index >= len(intent.skills):
+                return ""
+            return intent.skills[self._skill_index].name
 
     def _cancel_task(self, reason: str) -> None:
         self._cancel_pub.publish(String(data=reason))

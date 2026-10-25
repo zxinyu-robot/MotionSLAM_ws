@@ -50,10 +50,16 @@ def decimate_collinear_xy(
         ax, ay = out[-1]
         bx, by = float(xy_list[i][0]), float(xy_list[i][1])
         cx, cy = float(xy_list[i + 1][0]), float(xy_list[i + 1][1])
+        ux, uy = bx - ax, by - ay
+        seg = math.hypot(ux, uy)
+        if seg < 1e-9:
+            continue
         dx, dy = cx - ax, cy - ay
         chord = math.hypot(dx, dy)
-        dev = 0.0 if chord < 1e-9 else abs((bx - ax) * dy - (by - ay) * dx) / chord
-        if dev > eps_m:
+        # 弦退化（往返 a→b→a）按 b 离 a 的距离判；方向反转一律保留折返点
+        dev = seg if chord < 1e-9 else abs(ux * dy - uy * dx) / chord
+        reversal = ux * (cx - bx) + uy * (cy - by) < 0.0
+        if dev > eps_m or reversal:
             out.append((bx, by))
     out.append((float(xy_list[-1][0]), float(xy_list[-1][1])))
     return out

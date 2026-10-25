@@ -14,6 +14,7 @@ vkernel_sim:
     wall_z_min: 0.30
     wall_z_max: 1.20
     sample_step_m: 0.05
+    wall_stride: 4
     walls: [-1.5, -1.5, 3.5, -1.5,
             3.5, -1.5, 3.5, 3.5,
             3.5, 3.5, -1.5, 3.5,
