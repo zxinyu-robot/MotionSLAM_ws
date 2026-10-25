@@ -41,7 +41,8 @@ Registration failures: `kInvalidDescriptor`, `kDuplicateId`, `kUnresolvedRequire
 `recovery_bridge.hpp` connects the LNR `RecoveryPlugin` ([legged-navigation-runtime](https://github.com/zxinyu-robot/legged-navigation-runtime)) to the registry and the task runtime. Built only with `-DMOTIONSLAM_WITH_LNR=ON`; LNR is fetched at a pinned commit (set `FETCHCONTENT_SOURCE_DIR_LEGGED_NAVIGATION_RUNTIME` to use a local checkout).
 
 - `RecoveryPluginHost` registers the plugin as `kind=kRecovery`, `authority=kAdvice`, `provides={execution_authority_advice, recovery_action_advice}`, `needs={localization_health}`, and reports health on every update.
-- `RecoveryArbiter` is the BT-hub side and keeps execution authority. It maps advice onto `TaskRuntime` safety modes and only clears holds it placed itself:
+- `TaskRuntime::set_safety_source(source, mode)` keeps one mode per safety source (e-stop, recovery, ...); the effective mode is the most restrictive. `set_safety_mode()` is the `default` source.
+- `RecoveryArbiter` is the BT-hub side and keeps execution authority. It only drives the `recovery` source, so it can never clear another source's hold:
 
 | Advice | Runtime effect |
 | --- | --- |
@@ -51,7 +52,7 @@ Registration failures: `kInvalidDescriptor`, `kDuplicateId`, `kUnresolvedRequire
 | `Revoked` (SafeStop) | `HOLD` + fail the task with the reason code |
 | plugin stale | `HOLD`, reason `recovery_plugin_stale` |
 
-Advice from an unregistered plugin or an Evidence-level plugin is rejected.
+Advice from an unregistered plugin or an Evidence-level plugin is rejected, as is advice older than the last accepted one; advice older than 2x the health interval is treated as stale.
 
 ## Build and test
 

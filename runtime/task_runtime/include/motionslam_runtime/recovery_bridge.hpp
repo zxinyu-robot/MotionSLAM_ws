@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "legged_navigation/recovery_plugin.h"
@@ -57,31 +58,43 @@ class RecoveryPluginHost final {
 enum class ArbiterDecision {
   kApplied,        // advice changed the runtime state
   kNoChange,       // advice accepted, nothing to do
-  kRejected,       // source is not a registered Advice-level recovery plugin
+  kRejected,       // not a registered Advice-level recovery plugin, or
+                   // older than the last accepted advice
   kStaleFailSafe,  // plugin stale: BT held the task on its own authority
 };
 
 // BT-hub side of the boundary. Execution authority stays here: the arbiter
-// maps recovery advice onto TaskRuntime safety modes and only undoes holds it
-// placed itself.
+// drives only the "recovery" safety source of TaskRuntime, so holds owned by
+// other sources (e-stop, ...) are never cleared by recovery advice.
 //   Full       -> Normal; resume a recovery-held task on ResumeNavigation
 //   Restricted -> Degraded (fails closed until degraded mode is validated)
 //   Suspended  -> Hold
 //   Revoked    -> Hold + fail the active task with the reason code
-//   stale      -> Hold ("recovery_plugin_stale")
+//   stale      -> Hold ("recovery_plugin_stale"): plugin heartbeat or the
+//                 advice itself older than 2x the health interval
+// Advice older than the last accepted advice is rejected.
 class RecoveryArbiter final {
  public:
   ArbiterDecision apply(const PluginRegistry& registry,
                         const RecoveryAdvice& advice, TaskRuntime& runtime,
                         std::int64_t now_ns);
 
-  bool holding() const noexcept { return held_by_recovery_; }
+  static constexpr const char* kSafetySource = "recovery";
+
+  bool holding(const TaskRuntime& runtime) const {
+    return runtime.safety_source(kSafetySource) != SafetyMode::kNormal;
+  }
   const std::string& last_reason() const noexcept { return last_reason_; }
+  // forget advice ordering, e.g. after the plugin is re-registered
+  void reset() noexcept {
+    last_stamp_ns_.reset();
+    last_reason_.clear();
+  }
 
  private:
   static bool set_mode(TaskRuntime& runtime, SafetyMode mode);
 
-  bool held_by_recovery_{false};
+  std::optional<std::int64_t> last_stamp_ns_;
   std::string last_reason_;
 };
 

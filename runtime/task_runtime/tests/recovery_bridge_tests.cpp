@@ -79,7 +79,7 @@ void test_loss_holds_and_recovery_resumes() {
   step(frame(t, false));
   assert(rt.active_task()->status == TaskStatus::kHolding);
   assert(rt.safety_mode() == SafetyMode::kHold);
-  assert(arb.holding());
+  assert(arb.holding(rt));
   assert(arb.last_reason() == "LocalizationLost");
 
   // candidate -> alignment -> verify -> healthy frames
@@ -97,7 +97,7 @@ void test_loss_holds_and_recovery_resumes() {
   }
   assert(rt.safety_mode() == SafetyMode::kNormal);
   assert(rt.active_task()->status == TaskStatus::kRunning);
-  assert(!arb.holding());
+  assert(!arb.holding(rt));
 }
 
 // relocalization timeout -> Revoked -> task failed with the reason code.
@@ -159,8 +159,7 @@ void test_stale_plugin_fails_safe() {
   assert(rt.safety_mode() == SafetyMode::kNormal);
 }
 
-// Advice from unregistered or non-Advice plugins is ignored; a hold placed by
-// another safety source is never cleared by recovery advice.
+// Advice from unregistered or Evidence-level plugins is ignored.
 void test_boundaries() {
   PluginRegistry reg;
   reg.add(health_source());
@@ -174,16 +173,90 @@ void test_boundaries() {
   advice.authority = lnr::RecoveryAuthority::Revoked;
   assert(arb.apply(reg, advice, rt, 0) == ArbiterDecision::kRejected);
   assert(rt.active_task()->status == TaskStatus::kRunning);
+}
 
+RecoveryAdvice advice_at(const RecoveryPluginHost& host,
+                         lnr::RecoveryAuthority authority, std::int64_t ns,
+                         lnr::RecoveryAction action = lnr::RecoveryAction::None) {
+  (void)host;
+  RecoveryAdvice a;
+  a.plugin_id = "lnr-recovery";
+  a.authority = authority;
+  a.action = action;
+  a.stamp_ns = ns;
+  return a;
+}
+
+// An e-stop asserted after a recovery hold survives Full+ResumeNavigation.
+void test_foreign_hold_survives_recovery_clear() {
+  PluginRegistry reg;
+  reg.add(health_source());
+  RecoveryPluginHost host(reg);
   host.attach();
-  rt.set_safety_mode(SafetyMode::kHold);  // e.g. e-stop
-  const auto full = host.update(frame(50), 50 * kMs);
-  assert(arb.apply(reg, full, rt, 50 * kMs) == ArbiterDecision::kNoChange);
+  TaskRuntime rt;
+  RecoveryArbiter arb;
+  start_task(rt, "t6");
+  host.update(frame(0), 0);
+  arb.apply(reg, advice_at(host, lnr::RecoveryAuthority::Suspended, 0), rt, 0);
   assert(rt.safety_mode() == SafetyMode::kHold);
-  auto suspended = full;
-  suspended.authority = lnr::RecoveryAuthority::Suspended;
-  assert(arb.apply(reg, suspended, rt, 50 * kMs) == ArbiterDecision::kNoChange);
-  assert(!arb.holding());
+  rt.set_safety_source("estop", SafetyMode::kHold);
+  host.update(frame(50), 50 * kMs);
+  assert(arb.apply(reg,
+                   advice_at(host, lnr::RecoveryAuthority::Full, 50 * kMs,
+                             lnr::RecoveryAction::ResumeNavigation),
+                   rt, 50 * kMs) == ArbiterDecision::kApplied);
+  assert(!arb.holding(rt));
+  assert(rt.safety_mode() == SafetyMode::kHold);
+  assert(rt.active_task()->status == TaskStatus::kHolding);
+  rt.set_safety_source("estop", SafetyMode::kNormal);
+  assert(rt.safety_mode() == SafetyMode::kNormal);
+  assert(rt.active_task()->status == TaskStatus::kHolding);  // explicit resume
+}
+
+// Revoked fails the task even while another source owns HOLD or DEGRADED.
+void test_revoked_under_foreign_mode() {
+  for (const auto mode : {SafetyMode::kHold, SafetyMode::kDegraded}) {
+    PluginRegistry reg;
+    reg.add(health_source());
+    RecoveryPluginHost host(reg);
+    host.attach();
+    TaskRuntime rt;
+    RecoveryArbiter arb;
+    start_task(rt, "t7");
+    rt.set_safety_source("estop", mode);
+    host.update(frame(0), 0);
+    auto revoked = advice_at(host, lnr::RecoveryAuthority::Revoked, 0);
+    revoked.reason = lnr::RecoveryReason::RelocalizationTimeout;
+    assert(arb.apply(reg, revoked, rt, 0) == ArbiterDecision::kApplied);
+    assert(rt.active_task()->status == TaskStatus::kFailed);
+    assert(rt.active_task()->failure_reason == "RelocalizationTimeout");
+    assert(rt.safety_source("estop") == mode);
+  }
+}
+
+// Older advice cannot override a newer decision; old advice counts as stale.
+void test_advice_ordering_and_freshness() {
+  PluginRegistry reg;
+  reg.add(health_source());
+  RecoveryPluginHost host(reg, {}, 100 * kMs);
+  host.attach();
+  TaskRuntime rt;
+  RecoveryArbiter arb;
+  start_task(rt, "t8");
+  host.update(frame(150), 150 * kMs);
+  const auto old_full = advice_at(host, lnr::RecoveryAuthority::Full, 100 * kMs,
+                                  lnr::RecoveryAction::ResumeNavigation);
+  arb.apply(reg, advice_at(host, lnr::RecoveryAuthority::Suspended, 150 * kMs),
+            rt, 150 * kMs);
+  assert(rt.safety_mode() == SafetyMode::kHold);
+  assert(arb.apply(reg, old_full, rt, 160 * kMs) == ArbiterDecision::kRejected);
+  assert(rt.safety_mode() == SafetyMode::kHold);
+
+  // heartbeat is fresh but the advice itself is older than 2x the interval
+  host.update(frame(500), 500 * kMs);
+  const auto late = advice_at(host, lnr::RecoveryAuthority::Full, 200 * kMs);
+  assert(arb.apply(reg, late, rt, 500 * kMs) == ArbiterDecision::kStaleFailSafe);
+  assert(rt.safety_mode() == SafetyMode::kHold);
 }
 
 }  // namespace
@@ -195,5 +268,8 @@ int main() {
   test_degraded_mode_restricts();
   test_stale_plugin_fails_safe();
   test_boundaries();
+  test_foreign_hold_survives_recovery_clear();
+  test_revoked_under_foreign_mode();
+  test_advice_ordering_and_freshness();
   return 0;
 }

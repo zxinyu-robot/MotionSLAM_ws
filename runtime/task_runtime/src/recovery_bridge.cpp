@@ -53,10 +53,10 @@ RecoveryAdvice RecoveryPluginHost::update(const lnr::RecoveryInput& input,
 }
 
 bool RecoveryArbiter::set_mode(TaskRuntime& runtime, SafetyMode mode) {
-  if (runtime.safety_mode() == mode) {
+  if (runtime.safety_source(kSafetySource) == mode) {
     return false;
   }
-  runtime.set_safety_mode(mode);
+  runtime.set_safety_source(kSafetySource, mode);
   return true;
 }
 
@@ -69,29 +69,28 @@ ArbiterDecision RecoveryArbiter::apply(const PluginRegistry& registry,
       d->authority != PluginAuthority::kAdvice) {
     return ArbiterDecision::kRejected;
   }
+  if (last_stamp_ns_ && advice.stamp_ns < *last_stamp_ns_) {
+    return ArbiterDecision::kRejected;
+  }
 
-  // Never claim (and later clear) a hold another safety source already owns.
-  const bool foreign_hold =
-      !held_by_recovery_ && runtime.safety_mode() != SafetyMode::kNormal;
-
-  if (registry.liveness(advice.plugin_id, now_ns) != PluginLiveness::kLive) {
-    if (foreign_hold) {
-      return ArbiterDecision::kNoChange;
-    }
-    held_by_recovery_ = true;
+  const bool advice_stale = d->health_interval_ns > 0 &&
+                            now_ns - advice.stamp_ns > 2 * d->health_interval_ns;
+  if (advice_stale ||
+      registry.liveness(advice.plugin_id, now_ns) != PluginLiveness::kLive) {
     last_reason_ = "recovery_plugin_stale";
     set_mode(runtime, SafetyMode::kHold);
     return ArbiterDecision::kStaleFailSafe;
   }
+  last_stamp_ns_ = advice.stamp_ns;
 
   using Authority = lnr::RecoveryAuthority;
   if (advice.authority == Authority::Full) {
-    if (!held_by_recovery_) {
+    if (!holding(runtime)) {
       return ArbiterDecision::kNoChange;
     }
-    held_by_recovery_ = false;
     last_reason_.clear();
     set_mode(runtime, SafetyMode::kNormal);
+    // resume() itself refuses while any other source still holds.
     const auto& task = runtime.active_task();
     if (advice.action == lnr::RecoveryAction::ResumeNavigation && task &&
         task->status == TaskStatus::kHolding) {
@@ -100,10 +99,6 @@ ArbiterDecision RecoveryArbiter::apply(const PluginRegistry& registry,
     return ArbiterDecision::kApplied;
   }
 
-  if (foreign_hold) {
-    return ArbiterDecision::kNoChange;
-  }
-  held_by_recovery_ = true;
   if (advice.reason != lnr::RecoveryReason::None) {
     last_reason_ = std::string(lnr::RecoveryPlugin::name(advice.reason));
   } else if (last_reason_.empty() || last_reason_ == "recovery_plugin_stale") {
