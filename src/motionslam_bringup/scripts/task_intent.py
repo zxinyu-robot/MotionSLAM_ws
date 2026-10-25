@@ -10,7 +10,9 @@ schema: motionslam.task_intent.v1
                 "frame_id": "world", "revision": 1},
   "skills":  [{"name": "Navigate", "goal": {"x": 2.0, "y": 0.5, "z": 0.35}},
               {"name": "ReturnHome"}],
-  "policy":  {"deadline_s": 120.0}
+  "policy":  {"deadline_s": 120.0},
+  "execution":  {"priority": 0, "preemptible": false},     # 可选
+  "navigation": {"forbidden_areas": ["restricted_C"]}       # 可选，ID 由端侧 areas_file 解析
 }
 """
 from __future__ import annotations
@@ -54,6 +56,9 @@ class TaskIntent:
     revision: int = -1
     skills: list[IntentSkill] = field(default_factory=list)
     deadline_s: float = 0.0
+    priority: int = 0
+    preemptible: bool = False
+    forbidden_areas: list[str] = field(default_factory=list)
 
 
 def _err(code: str) -> str:
@@ -143,6 +148,22 @@ def validate_task_intent(
         if deadline <= 0:
             return None, _err("REJECT_BAD_DEADLINE")
 
+    execution = raw.get("execution") if isinstance(raw.get("execution"), dict) else {}
+    try:
+        priority = int(execution.get("priority", 0))
+    except (TypeError, ValueError):
+        return None, _err("REJECT_BAD_PRIORITY")
+    preemptible = execution.get("preemptible", False)
+    if not isinstance(preemptible, bool):
+        return None, _err("REJECT_BAD_PREEMPTIBLE")
+
+    navigation = raw.get("navigation") if isinstance(raw.get("navigation"), dict) else {}
+    forbidden_areas = navigation.get("forbidden_areas", [])
+    if not isinstance(forbidden_areas, list) or not all(
+        isinstance(a, str) and a.strip() for a in forbidden_areas
+    ):
+        return None, _err("REJECT_BAD_FORBIDDEN_AREAS")
+
     return (
         TaskIntent(
             task_id=task_id,
@@ -154,9 +175,76 @@ def validate_task_intent(
             revision=revision,
             skills=skills,
             deadline_s=deadline,
+            priority=priority,
+            preemptible=preemptible,
+            forbidden_areas=[a.strip() for a in forbidden_areas],
         ),
         None,
     )
+
+
+Polygon = list[tuple[float, float]]
+
+
+def _point_in_polygon(x: float, y: float, poly: Polygon) -> bool:
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
+def check_forbidden_areas(intent: TaskIntent, areas: dict[str, Polygon]) -> Optional[str]:
+    """禁区由端侧本地配置解析；未知区域 ID 失败即拒（fail closed）。
+
+    仅校验 Navigate 目标点，不约束全局路径穿越禁区（PCT 尚无禁行区输入）。
+    """
+    for area_id in intent.forbidden_areas:
+        poly = areas.get(area_id)
+        if poly is None or len(poly) < 3:
+            return _err(f"REJECT_UNKNOWN_AREA:{area_id}")
+        for i, skill in enumerate(intent.skills):
+            if skill.goal is not None and _point_in_polygon(skill.goal.x, skill.goal.y, poly):
+                return _err(f"REJECT_GOAL_IN_FORBIDDEN_AREA:{area_id}@skill{i}")
+    return None
+
+
+class AdmitDecision:
+    ACCEPT = "accept"
+    IDEMPOTENT = "idempotent"
+    PREEMPT = "preempt"
+
+
+class TaskAdmission:
+    """task_id 幂等 + 抢占准入（无 ROS）。
+
+    - 与活动任务同 task_id → IDEMPOTENT（不重派发）；
+    - 已受理过的 task_id → REJECT_DUPLICATE_TASK_ID（有界历史）；
+    - 有活动任务：仅当活动任务 preemptible 且新任务 priority 更高 → PREEMPT，否则 REJECT_BUSY。
+    """
+
+    def __init__(self, history: int = 256) -> None:
+        self._history = history
+        self._seen: dict[str, None] = {}
+
+    def decide(self, intent: TaskIntent, active: Optional[TaskIntent]) -> str:
+        if active is not None and intent.task_id == active.task_id:
+            return AdmitDecision.IDEMPOTENT
+        if intent.task_id in self._seen:
+            return _err("REJECT_DUPLICATE_TASK_ID")
+        if active is not None:
+            if active.preemptible and intent.priority > active.priority:
+                return AdmitDecision.PREEMPT
+            return _err("REJECT_BUSY")
+        return AdmitDecision.ACCEPT
+
+    def record(self, task_id: str) -> None:
+        self._seen[task_id] = None
+        while len(self._seen) > self._history:
+            self._seen.pop(next(iter(self._seen)))
 
 
 def build_feedback(

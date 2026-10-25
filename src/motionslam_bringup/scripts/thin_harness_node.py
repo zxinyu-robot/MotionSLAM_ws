@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import socket
 import socketserver
+
+import yaml
 import threading
 from typing import Any, Optional
 
@@ -32,6 +34,9 @@ from task_intent import (  # noqa: E402
     TaskIntent,
     build_feedback,
     validate_task_intent,
+    AdmitDecision,
+    TaskAdmission,
+    check_forbidden_areas,
 )
 
 
@@ -66,6 +71,9 @@ class ThinHarnessNode(Node):
         self.declare_parameter("local_map_id", "demo_live_map")
         self.declare_parameter("local_revision", 1)
         self.declare_parameter("default_deadline_s", 180.0)
+        # 禁区多边形：YAML {areas: {area_id: [[x, y], ...]}}；空则任何 forbidden_areas 引用都拒
+        self.declare_parameter("areas_file", "")
+        self.declare_parameter("preempt_timeout_s", 5.0)
 
         self._cap = set(self.get_parameter("capability_tags").value)
         self._platform = str(self.get_parameter("local_platform").value)
@@ -73,6 +81,11 @@ class ThinHarnessNode(Node):
         self._map_id = str(self.get_parameter("local_map_id").value)
         self._revision = int(self.get_parameter("local_revision").value)
         self._default_deadline = float(self.get_parameter("default_deadline_s").value)
+        self._areas = self._load_areas(str(self.get_parameter("areas_file").value))
+        self._preempt_timeout = float(self.get_parameter("preempt_timeout_s").value)
+        self._admission = TaskAdmission()
+        self._pending_intent: Optional[TaskIntent] = None
+        self._preempt_timer: Optional[threading.Timer] = None
 
         self._goal_pub = self.create_publisher(
             PoseStamped, str(self.get_parameter("semantic_goal_topic").value), 10
@@ -149,6 +162,8 @@ class ThinHarnessNode(Node):
         mtype = str(msg.get("type") or "task_intent")
         if mtype == "cancel_task":
             task_id = str(msg.get("task_id") or "")
+            with self._lock:
+                self._pending_intent = None
             self._cancel_task("explicit_cancel")
             return {"type": "task_canceled", "task_id": task_id}
         if mtype != "task_intent" or msg.get("schema") != SCHEMA_INTENT:
@@ -169,20 +184,68 @@ class ThinHarnessNode(Node):
                 "reason": f"REJECT_WORLD_REF:map={intent.map_id}@{intent.revision} "
                 f"local={self._map_id}@{self._revision}",
             }
+        area_err = check_forbidden_areas(intent, self._areas)
+        if area_err:
+            return {"type": "task_rejected", "task_id": intent.task_id, "reason": area_err}
         with self._lock:
-            if self._state in (TaskState.ACCEPTED, TaskState.RUNNING):
-                return {
-                    "type": "task_rejected",
-                    "task_id": intent.task_id,
-                    "reason": "REJECT_BUSY",
-                }
+            pending = self._pending_intent
+            if pending is not None:
+                if pending.task_id == intent.task_id:
+                    return {"type": "task_accepted", "task_id": intent.task_id, "idempotent": True}
+                return {"type": "task_rejected", "task_id": intent.task_id, "reason": "REJECT_BUSY"}
+            active = self._intent if self._state in (TaskState.ACCEPTED, TaskState.RUNNING) else None
+            decision = self._admission.decide(intent, active)
+            if decision == AdmitDecision.IDEMPOTENT:
+                return {"type": "task_accepted", "task_id": intent.task_id, "idempotent": True}
+            if decision not in (AdmitDecision.ACCEPT, AdmitDecision.PREEMPT):
+                return {"type": "task_rejected", "task_id": intent.task_id, "reason": decision}
+            self._admission.record(intent.task_id)
+            if decision == AdmitDecision.PREEMPT:
+                self._pending_intent = intent
+        if decision == AdmitDecision.PREEMPT:
+            # 先撤旧任务，待 BT 回 mission_canceled（或超时）后再派发新任务，避免取消落到新任务上
+            preempted = active.task_id  # type: ignore[union-attr]
+            self._cancel_task("preempted")
+            self._finish(TaskState.CANCELED, f"preempted_by:{intent.task_id}")
+            self._preempt_timer = threading.Timer(
+                self._preempt_timeout, self._start_pending, args=("preempt_timeout",)
+            )
+            self._preempt_timer.daemon = True
+            self._preempt_timer.start()
+            return {"type": "task_accepted", "task_id": intent.task_id, "preempted": preempted}
+        self._start_intent(intent)
+        return {"type": "task_accepted", "task_id": intent.task_id}
+
+    def _start_intent(self, intent: TaskIntent) -> None:
+        with self._lock:
             self._intent = intent
             self._skill_index = 0
             self._state = TaskState.ACCEPTED
         self._push_feedback("task_accepted", detail="intent_validated")
         self._arm_deadline()
         self._dispatch_skill()
-        return {"type": "task_accepted", "task_id": intent.task_id}
+
+    def _start_pending(self, reason: str) -> None:
+        with self._lock:
+            intent, self._pending_intent = self._pending_intent, None
+            timer, self._preempt_timer = self._preempt_timer, None
+        if timer is not None:
+            timer.cancel()
+        if intent is None:
+            return
+        self.get_logger().info(f"preempt handoff ({reason}) → {intent.task_id}")
+        self._start_intent(intent)
+
+    @staticmethod
+    def _load_areas(path: str) -> dict[str, list[tuple[float, float]]]:
+        if not path:
+            return {}
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        return {
+            str(k): [(float(p[0]), float(p[1])) for p in v]
+            for k, v in (raw.get("areas") or {}).items()
+        }
 
     def _arm_deadline(self) -> None:
         if self._deadline_timer is not None:
@@ -239,6 +302,9 @@ class ThinHarnessNode(Node):
         except json.JSONDecodeError:
             return
         event = str(body.get("event", ""))
+        if event == "mission_canceled" and self._pending_intent is not None:
+            self._start_pending("mission_canceled")
+            return
         with self._lock:
             if self._state != TaskState.RUNNING or self._intent is None:
                 return
