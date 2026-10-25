@@ -8,12 +8,12 @@ MotionSLAM_ws 是一个基于 ROS 2 Humble 构建的工作空间，专为搭载 
 
 [完整视频 mp4](docs/media/cross_floor_demo.mp4)
 
-### 数据集预览
-Elevator-LIO 数据集（`datasets/Elevator-LIO-Dataset`，18.9 GB）：20 条序列 / 79 次电梯乘坐，Livox MID-360（`/livox/lidar`、`/livox/imu`），覆盖办公楼/宿舍/校园/商场跨楼层场景。下图为 `Office1.bag` 的 BEV 点云回放预览（原始雷达帧滑动窗累积，颜色=高度）。
+### 数据集场景回放
+Elevator-LIO 数据集（`datasets/Elevator-LIO-Dataset`，18.9 GB）：20 条序列 / 79 次电梯乘坐，Livox MID-360（`/livox/lidar`、`/livox/imu`），覆盖办公楼/宿舍/校园/商场跨楼层场景。下图前半段为 Go2 真机跨楼层演示，后半段为 `Office9.bag` 场景回放：直接解析 ROS1 bag，Open3D scan-to-map ICP 配准累积成地图（轻量化回放，非官方 LIO 结果），第三人称跟随视角渲染，天花板切除、地面灰蓝、墙面按高度着色，绿线为传感器轨迹，末尾为全图环视。
 
-![Elevator-LIO Office1 点云预览](docs/media/elevator_lio_preview.gif)
+![Go2 跨楼层演示 + Elevator-LIO Office9 场景回放](docs/media/cross_floor_with_elevator_lio.webp)
 
-[完整视频 mp4](docs/media/elevator_lio_preview.mp4)
+[完整视频 mp4](docs/media/cross_floor_with_elevator_lio.mp4)
 
 ### 核心特性（自研能力）
 该工作空间实现了一套稳健且具备容错能力的自主导航技术栈，核心功能涵盖：
