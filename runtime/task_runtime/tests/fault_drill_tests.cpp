@@ -161,7 +161,7 @@ void test_loss_timeout_fails() {
   r.step(FaultKind::LocalizationLost);
   r.ticks(6 + 26);  // confirmation + search_timeout_ms
   assert(r.status() == TaskStatus::kFailed);
-  assert(r.rt.active_task()->failure_reason == "RelocalizationTimeout");
+  assert(r.rt.active_task()->failure_reason == "relocalization_timeout");
   assert(r.rt.safety_mode() == SafetyMode::kHold);
 }
 
@@ -183,7 +183,7 @@ void test_pose_jump() {
   assert(r.gate_decision == GateDecision::kHold);
   assert(r.gate.last_reason() == "localization_jump");
   r.ticks(6);
-  assert(r.arb.last_reason() == "LocalizationJump");
+  assert(r.arb.last_reason() == "localization_jump");
   assert(r.status() == TaskStatus::kHolding);
 }
 

@@ -80,7 +80,7 @@ void test_loss_holds_and_recovery_resumes() {
   assert(rt.active_task()->status == TaskStatus::kHolding);
   assert(rt.safety_mode() == SafetyMode::kHold);
   assert(arb.holding(rt));
-  assert(arb.last_reason() == "LocalizationLost");
+  assert(arb.last_reason() == "localization_lost");
 
   // candidate -> alignment -> verify -> healthy frames
   auto in = frame(t += 50, false);
@@ -113,7 +113,7 @@ void test_timeout_revokes_and_fails_task() {
     arb.apply(reg, host.update(frame(t, false), t * kMs), rt, t * kMs);
   }
   assert(rt.active_task()->status == TaskStatus::kFailed);
-  assert(rt.active_task()->failure_reason == "RelocalizationTimeout");
+  assert(rt.active_task()->failure_reason == "relocalization_timeout");
   assert(rt.safety_mode() == SafetyMode::kHold);
 }
 
@@ -229,7 +229,7 @@ void test_revoked_under_foreign_mode() {
     revoked.reason = lnr::RecoveryReason::RelocalizationTimeout;
     assert(arb.apply(reg, revoked, rt, 0) == ArbiterDecision::kApplied);
     assert(rt.active_task()->status == TaskStatus::kFailed);
-    assert(rt.active_task()->failure_reason == "RelocalizationTimeout");
+    assert(rt.active_task()->failure_reason == "relocalization_timeout");
     assert(rt.safety_source("estop") == mode);
   }
 }
