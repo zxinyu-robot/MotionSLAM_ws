@@ -58,7 +58,7 @@ Advice from an unregistered plugin or an Evidence-level plugin is rejected, as i
 
 `contract_bridge.hpp` connects the FSR contract ([fork-spatial-runtime](https://github.com/zxinyu-robot/fork-spatial-runtime) `contract/spatial_state.h`) to the runtime. Built only with `-DMOTIONSLAM_WITH_FSR=ON` (requires `MOTIONSLAM_WITH_LNR=ON`); FSR is fetched at a pinned commit (set `FETCHCONTENT_SOURCE_DIR_FORK_SPATIAL_RUNTIME` to use a local checkout).
 
-- `to_recovery_input(LocalizationHealth, now_ns, RelocalizationProgress)` feeds the contract health into the LNR plugin. Tracking is valid in `Normal3D` / `Degraded2D` / `Verifying` (LNR counts verification frames while the `ContractGate` still holds), invalid in `Relocalizing` / `Hold`. `RelocalizationProgress` (candidate found / alignment complete / success) comes from the localization source, because `LocalizationHealth` does not carry it.
+- `to_recovery_input(LocalizationHealth, now_ns)` feeds the contract health, including its relocalization progress fields (`candidate_found` / `alignment_complete` / `alignment_success`), into the LNR plugin. Tracking is valid in `Normal3D` / `Degraded2D` / `Verifying` (LNR counts verification frames while the `ContractGate` still holds), invalid in `Relocalizing` / `Hold`.
 - `ContractGate` is the BT-hub side of `admit()` and `dispose(lease)`. It drives only the `contract` safety source and never resumes a task:
 
 | Contract result | Runtime effect |

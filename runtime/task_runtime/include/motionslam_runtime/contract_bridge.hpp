@@ -11,21 +11,12 @@ namespace motionslam::runtime {
 
 namespace fsc = fork_spatial::contract;
 
-// Relocalization progress reported by the localization source (e.g. Super-LIO
-// /lio/relocation/*). LocalizationHealth does not carry it, but the LNR state
-// machine needs it to leave Searching/Aligning.
-struct RelocalizationProgress {
-  bool candidate_found{false};
-  bool alignment_complete{false};
-  bool alignment_success{false};
-};
-
-// FSR LocalizationHealth -> LNR RecoveryInput. Tracking is valid in Normal3D,
-// Degraded2D and Verifying (LNR counts healthy frames while the contract
-// still holds); Relocalizing and Hold are tracking loss.
+// FSR LocalizationHealth -> LNR RecoveryInput, including the relocalization
+// progress fields. Tracking is valid in Normal3D, Degraded2D and Verifying
+// (LNR counts healthy frames while the contract still holds); Relocalizing
+// and Hold are tracking loss.
 legged_navigation::RecoveryInput to_recovery_input(
-    const fsc::LocalizationHealth& health, std::int64_t now_ns,
-    const RelocalizationProgress& progress = {});
+    const fsc::LocalizationHealth& health, std::int64_t now_ns);
 
 // Failure reason for a non-Accept lease disposition; contract ReasonCode
 // names where one exists, "lease_<disposition>" otherwise.

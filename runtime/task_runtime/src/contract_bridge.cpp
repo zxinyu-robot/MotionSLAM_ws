@@ -12,8 +12,7 @@ static_assert(static_cast<std::uint8_t>(fsc::LocalizationMode::Verifying) == 3);
 static_assert(static_cast<std::uint8_t>(fsc::LocalizationMode::Hold) == 4);
 
 lnr::RecoveryInput to_recovery_input(const fsc::LocalizationHealth& health,
-                                     std::int64_t now_ns,
-                                     const RelocalizationProgress& progress) {
+                                     std::int64_t now_ns) {
   lnr::RecoveryInput in;
   in.timestamp_ms = now_ns / 1'000'000;
   in.localization_mode = static_cast<std::uint8_t>(health.mode);
@@ -26,9 +25,9 @@ lnr::RecoveryInput to_recovery_input(const fsc::LocalizationHealth& health,
   // ContractGate still holds execution until the health is usable().
   in.tracking_valid = health.mode != fsc::LocalizationMode::Relocalizing &&
                       health.mode != fsc::LocalizationMode::Hold;
-  in.descriptor_candidate_found = progress.candidate_found;
-  in.alignment_complete = progress.alignment_complete;
-  in.alignment_success = progress.alignment_success;
+  in.descriptor_candidate_found = health.candidate_found;
+  in.alignment_complete = health.alignment_complete;
+  in.alignment_success = health.alignment_success;
   return in;
 }
 

@@ -66,21 +66,18 @@ struct Rig {
 
   // One control tick: inject, then the BT hub applies the contract gate and
   // the recovery advice for the same instant.
-  void step(FaultKind kind, RelocalizationProgress progress = {},
-            std::int64_t advance_ns = kTick, double amount = 0.0) {
+  void step(FaultKind kind, std::int64_t advance_ns = kTick, double amount = 0.0) {
     const auto r = fsc::inject(world, {kind, advance_ns, amount});
     gate_decision = gate.apply(r.admit, r.lease, rt);
     const auto advice = host.update(
-        to_recovery_input(world.header.health, r.now_ns, progress), r.now_ns);
+        to_recovery_input(world.header.health, r.now_ns), r.now_ns);
     arb_decision = arb.apply(reg, advice, rt, r.now_ns);
   }
-  void ticks(int n, RelocalizationProgress progress = {}) {
-    for (int i = 0; i < n; ++i) step(FaultKind::Noop, progress);
+  void ticks(int n) {
+    for (int i = 0; i < n; ++i) step(FaultKind::Noop);
   }
   TaskStatus status() const { return rt.active_task()->status; }
 };
-
-constexpr RelocalizationProgress kRelocalized{true, true, true};
 
 void test_mapping() {
   fsc::LocalizationHealth h;
@@ -90,7 +87,8 @@ void test_mapping() {
   h.alignment_fitness = 0.1;
   h.healthy_frames = 2;
   h.stance_ok = false;
-  auto in = to_recovery_input(h, 1'234 * kMs, {true, false, false});
+  h.candidate_found = true;
+  auto in = to_recovery_input(h, 1'234 * kMs);
   assert(in.timestamp_ms == 1'234);
   assert(in.localization_mode == 1);
   assert(in.tracking_valid);
@@ -112,9 +110,14 @@ void test_verifying_counts_without_failing() {
   Rig r;
   r.step(FaultKind::LocalizationLost);
   r.ticks(6);
-  r.world.header.health.mode = fsc::LocalizationMode::Verifying;
-  r.world.header.health.reason = fsc::ReasonCode::None;
-  r.ticks(5, kRelocalized);  // Aligning -> Verifying -> 3 healthy frames
+  auto& h = r.world.header.health;
+  h.candidate_found = h.alignment_complete = h.alignment_success = true;
+  h.mode = fsc::LocalizationMode::Verifying;
+  h.reason = fsc::ReasonCode::None;
+  r.step(FaultKind::Noop);  // Searching -> Aligning
+  r.step(FaultKind::Noop);  // Aligning -> Verifying
+  h.candidate_found = h.alignment_complete = h.alignment_success = false;
+  r.ticks(3);  // healthy Verifying frames, no new candidate events
   assert(r.rt.safety_source(RecoveryArbiter::kSafetySource) == SafetyMode::kNormal);
   assert(r.rt.safety_source(ContractGate::kSafetySource) == SafetyMode::kHold);
   assert(r.status() == TaskStatus::kHolding);
@@ -142,12 +145,12 @@ void test_loss_hold_then_resume() {
   assert(r.rt.safety_source(RecoveryArbiter::kSafetySource) == SafetyMode::kHold);
   assert(r.rt.safety_source(ContractGate::kSafetySource) == SafetyMode::kHold);
 
-  r.step(FaultKind::Recover, kRelocalized);  // Searching -> Aligning
+  r.step(FaultKind::Recover);  // Searching -> Aligning
   assert(r.gate_decision == GateDecision::kAccept);
   assert(r.rt.safety_source(ContractGate::kSafetySource) == SafetyMode::kNormal);
   assert(r.status() == TaskStatus::kHolding);  // recovery still holds
 
-  r.ticks(4, kRelocalized);  // Aligning -> Verifying -> 3 healthy frames
+  r.ticks(4);  // Aligning -> Verifying -> 3 healthy frames
   assert(r.rt.safety_mode() == SafetyMode::kNormal);
   assert(r.status() == TaskStatus::kRunning);
 }
@@ -176,7 +179,7 @@ void test_short_dropout_needs_explicit_resume() {
 // pose jump: Relocalizing -> contract Reverify; LNR names the jump.
 void test_pose_jump() {
   Rig r;
-  r.step(FaultKind::PoseJump, {}, kTick, 2.0);
+  r.step(FaultKind::PoseJump, kTick, 2.0);
   assert(r.gate_decision == GateDecision::kHold);
   assert(r.gate.last_reason() == "localization_jump");
   r.ticks(6);
