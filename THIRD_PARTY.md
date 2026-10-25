@@ -9,6 +9,7 @@
 | unitree_ros2 | https://github.com/unitreerobotics/unitree_ros2.git | — | `668d1ec5a05d1c38d3306bdca7d59f2ba3581a88` |
 | PCT_planner | https://github.com/VectorRobotics/PCT_planner.git | main | `0cf4827eb0e3374345b836b74ad6ea7d913b0edf` |
 | SCAN-Planner | https://github.com/wuyi2121/SCAN-Planner.git | ros2-community | `d62de0844c526b9a66e4ac33733a9b8ed84943ad` |
+| legged-terrain-state (vendored) | https://github.com/zxinyu-robot/legged-terrain-state.git | main | `third_party/legged_terrain_state`（MIT，LICENSE 随附） |
 
 ## 本仓 patch
 

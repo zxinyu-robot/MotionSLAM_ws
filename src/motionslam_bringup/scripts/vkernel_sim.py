@@ -25,7 +25,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
 
-from motionslam_msgs.msg import MotionCommand
+from motionslam_msgs.msg import MotionCommand, TerrainObservation
 
 try:
     from unitree_api.msg import Request as SportRequest
@@ -151,6 +151,9 @@ class VKernelSim(Node):
         self.declare_parameter("fov_el_max_deg", 40.0)
         self.declare_parameter("ang_res_deg", 0.8)
         self.declare_parameter("max_range_m", 12.0)
+        # 地形观测（/terrain/observation）：支撑面采样半径与期望点数
+        self.declare_parameter("terrain_obs_radius", 0.6)
+        self.declare_parameter("terrain_expected_points", 200)
 
         self._world = str(self.get_parameter("world_frame").value)
         self._body = str(self.get_parameter("body_frame").value)
@@ -182,6 +185,10 @@ class VKernelSim(Node):
         )
         self._prior_pub = self.create_publisher(
             PointCloud2, "/prior_map/cloud", qos_latched
+        )
+        # 地形观测（LTS 契约）：vkernel 高程图 → /terrain/observation
+        self._terrain_pub = self.create_publisher(
+            TerrainObservation, "/terrain/observation", qos
         )
         # 主执行出口：closed_loop_controller → /cmd_vel (Twist)
         self.create_subscription(
@@ -299,6 +306,72 @@ class VKernelSim(Node):
         msg.twist.twist.linear.y = self._vy
         msg.twist.twist.angular.z = self._vyaw
         self._odom_pub.publish(msg)
+        self._publish_terrain_obs()
+
+    def _publish_terrain_obs(self) -> None:
+        """高程图 → /terrain/observation（LTS 契约：感知产出观测，不做控制决策）。
+
+        支撑面 = 机器人格内距当前 z 最近的候选层；法向由邻域层高差拟合；
+        粗糙度 = 邻域支撑层残差；支撑点数 = 邻域内接近支撑层的场景点计数。
+        无高程图（参数化 ramps/floors）时给平地名义观测。
+        """
+        obs = TerrainObservation()
+        obs.header.stamp = self.get_clock().now().to_msg()
+        obs.header.frame_id = self._world
+        radius = float(self.get_parameter("terrain_obs_radius").value)
+        expected = int(self.get_parameter("terrain_expected_points").value)
+        if self._hm is None:
+            z = _height_at(self._x, self._y, self._ramps, self._floors)
+            obs.support_height_m = z
+            obs.surface_normal = [0.0, 0.0, 1.0]
+            obs.roughness_m = 0.0
+            obs.support_points = expected
+            obs.expected_points = expected
+            self._terrain_pub.publish(obs)
+            return
+
+        (ox, oy), res, levels = self._hm
+        support = self._ground_z()
+        # 邻域（机器人半径内格子）的支撑层平面拟合 → 法向/粗糙度
+        r_cells = max(1, int(radius / res))
+        cx0 = int((self._x - ox) / res)
+        cy0 = int((self._y - oy) / res)
+        xs, ys, zs = [], [], []
+        for dy in range(-r_cells, r_cells + 1):
+            for dx in range(-r_cells, r_cells + 1):
+                cy, cx = cy0 + dy, cx0 + dx
+                if not (0 <= cy < levels.shape[0] and 0 <= cx < levels.shape[1]):
+                    continue
+                cand = levels[cy, cx][np.isfinite(levels[cy, cx])]
+                if not cand.size:
+                    continue
+                # 每格取距当前支撑高度最近的层（沿坡道连续，不跳层）
+                lv = float(cand[np.argmin(np.abs(cand - support))])
+                xs.append(ox + (cx + 0.5) * res)
+                ys.append(oy + (cy + 0.5) * res)
+                zs.append(lv)
+        if len(zs) >= 3:
+            A = np.stack([np.array(xs) - self._x, np.array(ys) - self._y,
+                          np.ones(len(zs))], axis=1)
+            coef, res_sq, *_ = np.linalg.lstsq(A, np.array(zs), rcond=None)
+            nx, ny = -float(coef[0]), -float(coef[1])
+            n = math.sqrt(nx * nx + ny * ny + 1.0)
+            obs.surface_normal = [nx / n, ny / n, 1.0 / n]
+            obs.roughness_m = float(
+                np.sqrt(np.mean((np.array(zs) - A @ coef) ** 2)))
+        else:
+            obs.surface_normal = [0.0, 0.0, 1.0]
+            obs.roughness_m = 0.0
+        obs.support_height_m = float(support)
+        # 支撑点数：半径内接近支撑高度（±step_z/2 带）的场景点计数
+        band = float(self.get_parameter("step_z").value) * 0.5
+        pts = self._scene_pts
+        near = (
+            (pts[:, 0] - self._x) ** 2 + (pts[:, 1] - self._y) ** 2 < radius * radius
+        ) & (np.abs(pts[:, 2] - support) < band)
+        obs.support_points = int(np.count_nonzero(near))
+        obs.expected_points = expected
+        self._terrain_pub.publish(obs)
 
     def _ground_z(self) -> float:
         """地面 z：优先场景高度图（取距当前 z 最近的候选层，模拟沿楼梯逐层过渡），

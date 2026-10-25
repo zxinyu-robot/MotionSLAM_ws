@@ -84,6 +84,16 @@ ament_target_dependencies(pct_resident_planner
   rclcpp sensor_msgs nav_msgs geometry_msgs std_srvs pcl_conversions)
 target_link_libraries(pct_resident_planner ${PCL_LIBRARIES})
 
+# vendored legged-terrain-state 契约核（third_party/，无 ROS 依赖）
+add_library(legged_terrain_state STATIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/legged_terrain_state/src/terrain_assessor.cpp)
+target_include_directories(legged_terrain_state PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/legged_terrain_state/include)
+
+add_executable(terrain_safety_node src/TerrainSafetyNode.cpp)
+ament_target_dependencies(terrain_safety_node rclcpp motionslam_msgs)
+target_link_libraries(terrain_safety_node legged_terrain_state)
+
 add_executable(virtual_obstacle_merge src/VirtualObstacleMerge.cpp)
 ament_target_dependencies(virtual_obstacle_merge
   rclcpp sensor_msgs pcl_conversions)
@@ -100,6 +110,7 @@ install(TARGETS cmd_vel_forwarder estop_go2 restore_go2_remote enable_go2_api_wa
   mapping_motion_guard mapping_keyframe_manager pose_graph_backend
   loop_detection_node local_map_node demo_navigation_context
   pct_resident_planner virtual_obstacle_merge bev_glass_layer
+  terrain_safety_node
   DESTINATION lib/${PROJECT_NAME})
 install(TARGETS map_session_manager_lib
   EXPORT map_session_manager_targets

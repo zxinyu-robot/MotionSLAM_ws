@@ -263,6 +263,14 @@ def _setup(context, *args, **kwargs):
             output="screen",
             parameters=[pipeline_yaml, demo_yaml, *extra_params],
         ),
+        Node(
+            condition=IfCondition(with_forwarder),
+            package="motionslam_pipeline",
+            executable="terrain_safety_node",
+            name="terrain_safety_node",
+            output="screen",
+            parameters=[pipeline_yaml, *extra_params],
+        ),
     ]
     bt_params = {
         "waypoints_file": waypoints_yaml,
