@@ -36,10 +36,30 @@ The core stores execution policy fields but does not yet enforce deadlines, prio
 
 Registration failures: `kInvalidDescriptor`, `kDuplicateId`, `kUnresolvedRequires`. Removing a plugin recomputes the provided-capability set, so dependents can no longer register against a removed provider.
 
+## LNR recovery bridge (optional)
+
+`recovery_bridge.hpp` connects the LNR `RecoveryPlugin` ([legged-navigation-runtime](https://github.com/zxinyu-robot/legged-navigation-runtime)) to the registry and the task runtime. Built only with `-DMOTIONSLAM_WITH_LNR=ON`; LNR is fetched at a pinned commit (set `FETCHCONTENT_SOURCE_DIR_LEGGED_NAVIGATION_RUNTIME` to use a local checkout).
+
+- `RecoveryPluginHost` registers the plugin as `kind=kRecovery`, `authority=kAdvice`, `provides={execution_authority_advice, recovery_action_advice}`, `needs={localization_health}`, and reports health on every update.
+- `RecoveryArbiter` is the BT-hub side and keeps execution authority. It maps advice onto `TaskRuntime` safety modes and only clears holds it placed itself:
+
+| Advice | Runtime effect |
+| --- | --- |
+| `Full` | back to `NORMAL`; resume the held task only on `ResumeNavigation` |
+| `Restricted` (Degraded2D) | `DEGRADED` (fails closed until degraded mode is validated) |
+| `Suspended` (Searching/Aligning/Verifying) | `HOLD` |
+| `Revoked` (SafeStop) | `HOLD` + fail the task with the reason code |
+| plugin stale | `HOLD`, reason `recovery_plugin_stale` |
+
+Advice from an unregistered plugin or an Evidence-level plugin is rejected.
+
 ## Build and test
 
 ```bash
 cmake -S runtime/task_runtime -B build/runtime-task
 cmake --build build/runtime-task
 ctest --test-dir build/runtime-task --output-on-failure
+
+# with the LNR recovery bridge
+cmake -S runtime/task_runtime -B build/runtime-task -DMOTIONSLAM_WITH_LNR=ON
 ```
