@@ -1,7 +1,8 @@
-# MotionSLAM_ws
+# quadruped-crossfloor-nav-ws
 
-### 项目概述
-MotionSLAM_ws 是一个基于 ROS 2 Humble 构建的工作空间，专为搭载 Livox Mid-360 激光雷达的 Unitree Go2 四足机器人提供跨楼层自主导航能力而设计。任务编排、空间状态运行时与控制指令适配等核心链路均为自研实现。
+## 项目概述
+quadruped-crossfloor-nav-ws 是一个基于 ROS 2 Humble 构建的工作空间，面向四足机器人的跨楼层自主导航任务。
+当前以 Unitree Go2 搭载 Livox Mid-360 激光雷达为验证平台，核心的**任务编排、空间状态运行时与控制指令适配**链路均为自研实现，并通过平台适配层实现与具体硬件型号的解耦，支持后续迁移至其他四足平台。
 
 ### 闭环演示
 ![云端跨楼层闭环演示](docs/media/cross_floor_demo.webp)
