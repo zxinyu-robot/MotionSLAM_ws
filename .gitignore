@@ -51,3 +51,5 @@ src/Super-LIO/
 src/livox_ros_driver2/
 src/PCT_planner/
 src/SCAN-Planner/
+# 数据集 (大文件不入库)
+datasets/
