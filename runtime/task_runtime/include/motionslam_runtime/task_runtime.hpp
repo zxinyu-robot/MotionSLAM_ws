@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -97,7 +98,12 @@ class TaskRuntime final {
   bool fail(std::string reason);
   bool complete_current_skill();
 
+  // Each safety source (e-stop, recovery, ...) owns its own mode; the
+  // effective mode is the most restrictive one (HOLD > DEGRADED > NORMAL).
+  // set_safety_mode() is the "default" source.
   void set_safety_mode(SafetyMode mode);
+  void set_safety_source(const std::string& source, SafetyMode mode);
+  SafetyMode safety_source(const std::string& source) const;
   SafetyMode safety_mode() const noexcept { return safety_mode_; }
   const std::optional<TaskSnapshot>& active_task() const noexcept {
     return active_task_;
@@ -112,6 +118,7 @@ class TaskRuntime final {
             std::string reason = {});
 
   SafetyMode safety_mode_{SafetyMode::kNormal};
+  std::map<std::string, SafetyMode> safety_sources_;
   std::optional<TaskSnapshot> active_task_;
   std::set<std::string> seen_task_ids_;
   std::vector<RuntimeEvent> events_;
