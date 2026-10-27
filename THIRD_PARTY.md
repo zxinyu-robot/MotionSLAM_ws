@@ -9,10 +9,12 @@
 | unitree_ros2 | https://github.com/unitreerobotics/unitree_ros2.git | — | `668d1ec5a05d1c38d3306bdca7d59f2ba3581a88` |
 | PCT_planner | https://github.com/VectorRobotics/PCT_planner.git | main | `0cf4827eb0e3374345b836b74ad6ea7d913b0edf` |
 | SCAN-Planner | https://github.com/wuyi2121/SCAN-Planner.git | ros2-community | `d62de0844c526b9a66e4ac33733a9b8ed84943ad` |
+| legged-terrain-state (vendored) | https://github.com/zxinyu-robot/legged-terrain-state.git | main | `third_party/legged_terrain_state`（MIT，LICENSE 随附） |
 
 ## 本仓 patch
 
 - `patches/scan-planner-motionslam.patch` — 应用到 SCAN-Planner 后于 `scan_planner_ws` 编译
+- 注：SCAN-Planner 的 pin `d62de08` 是 Jetson 本地提交、不在上游仓库；云端引导（`scripts/dev/cloud_bootstrap.sh`）用 `ros2-community` 分支头 + patch（其 `closed_loop_controller.cpp` 一个 hunk 与上游当前实现冲突，可跳过）
 - `patches/pct-planner-motionslam.patch` — PCT 可选对照改动
 
 ## 说明

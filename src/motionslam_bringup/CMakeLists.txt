@@ -37,6 +37,13 @@ install(PROGRAMS scripts/cloud_to_grid.py scripts/robot_pose_viz.py
   scripts/glass_suspect_analysis.py
   scripts/glass_suspect_layer.py
   scripts/motor_monitor_node.py
+  scripts/vkernel_sim.py
+  scripts/task_intent.py
+  scripts/thin_harness_node.py
+  scripts/task_intent_client.py
+  scripts/cloud_mission_watch.py
+  scripts/cloud_video_render.py
+  scripts/cloud_video_render_3d.py
   scripts/foxglove_bridge_legacy.sh
   DESTINATION lib/${PROJECT_NAME})
 

@@ -29,7 +29,7 @@ class TaskIdentityContext:
     local_robot_id: str = "go2_001"
     local_platform: str = "unitree_go2_edu"
     local_capability_tags: set[str] = field(
-        default_factory=lambda: {"Navigate", "ReturnHome", "RecoverGlass", "ExploreFrontier"}
+        default_factory=lambda: {"Navigate", "ReturnHome", "ExploreFrontier"}
     )
     now_ns: Optional[int] = None
 

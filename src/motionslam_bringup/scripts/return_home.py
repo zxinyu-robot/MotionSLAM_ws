@@ -32,6 +32,39 @@ def densify_xy(
     return out
 
 
+def decimate_collinear_xy(
+    xy_list: Sequence[tuple[float, float]],
+    *,
+    eps_m: float = 0.02,
+) -> list[tuple[float, float]]:
+    """去掉近似共线的中间点，只保留首尾与明显拐角。
+
+    直线加密后的等距点会让 SCAN 的 minSnapTraj 拟合病态
+    （系数爆炸到 1e11 量级），直线段只留首尾即可走
+    稳定的单段轨迹生成。
+    """
+    if len(xy_list) <= 2:
+        return [(float(x), float(y)) for x, y in xy_list]
+    out: list[tuple[float, float]] = [(float(xy_list[0][0]), float(xy_list[0][1]))]
+    for i in range(1, len(xy_list) - 1):
+        ax, ay = out[-1]
+        bx, by = float(xy_list[i][0]), float(xy_list[i][1])
+        cx, cy = float(xy_list[i + 1][0]), float(xy_list[i + 1][1])
+        ux, uy = bx - ax, by - ay
+        seg = math.hypot(ux, uy)
+        if seg < 1e-9:
+            continue
+        dx, dy = cx - ax, cy - ay
+        chord = math.hypot(dx, dy)
+        # 弦退化（往返 a→b→a）按 b 离 a 的距离判；方向反转一律保留折返点
+        dev = seg if chord < 1e-9 else abs(ux * dy - uy * dx) / chord
+        reversal = ux * (cx - bx) + uy * (cy - by) < 0.0
+        if dev > eps_m or reversal:
+            out.append((bx, by))
+    out.append((float(xy_list[-1][0]), float(xy_list[-1][1])))
+    return out
+
+
 def record_breadcrumb(
     trail: list[tuple[float, float]],
     x: float,
@@ -91,7 +124,6 @@ def reverse_xy_for_scan(
 def should_return_home(
     *,
     explicit: bool = False,
-    glass_trap: bool = False,
     link_lost: bool = False,
     already_returning: bool = False,
     trail_len: int = 0,
@@ -101,8 +133,6 @@ def should_return_home(
         return None
     if explicit:
         return "explicit"
-    if glass_trap:
-        return "glass_trap"
     if link_lost:
         return "link_lost"
     return None

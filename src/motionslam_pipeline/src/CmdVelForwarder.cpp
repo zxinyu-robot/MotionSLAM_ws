@@ -17,6 +17,7 @@
 #include <string>
 
 #include <motionslam_msgs/msg/motion_command.hpp>
+#include <motionslam_msgs/msg/terrain_decision.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <unitree_api/msg/request.hpp>
 
@@ -62,6 +63,13 @@ class CmdVelForwarder : public rclcpp::Node {
     backend_ = declare_parameter<std::string>("backend", "sport");
     sport_free_avoid_enabled_ = declare_parameter("sport_free_avoid_enabled", false);
 
+    // 地形安全约束（legged-terrain-state 契约）：safety_mode 施加于运动指令
+    terrain_safety_enabled_ = declare_parameter("terrain_safety_enabled", true);
+    // 收到过决策后超时未更新 → HoldPosition；从未收到 → Normal（无感知时放开）
+    terrain_decision_timeout_ms_ =
+        declare_parameter("terrain_decision_timeout_ms", 1500);
+    reduce_speed_factor_ = declare_parameter("reduce_speed_factor", 0.4);
+
     const char* topic = kSportRequestTopic;
     if (backend_ == "obstacles_avoid") {
       topic = kObstaclesAvoidRequestTopic;
@@ -82,6 +90,17 @@ class CmdVelForwarder : public rclcpp::Node {
         [this](motionslam_msgs::msg::MotionCommand::SharedPtr msg) {
           OnMotionCommand(*msg);
         });
+
+    if (terrain_safety_enabled_) {
+      terrain_sub_ =
+          create_subscription<motionslam_msgs::msg::TerrainDecision>(
+              "/terrain/decision", 10,
+              [this](motionslam_msgs::msg::TerrainDecision::SharedPtr msg) {
+                terrain_mode_ = msg->safety_mode;
+                last_terrain_time_ = now();
+                has_terrain_decision_ = true;
+              });
+    }
 
     watchdog_timer_ = create_wall_timer(std::chrono::milliseconds(100),
                                         [this] { OnWatchdog(); });
@@ -194,7 +213,33 @@ class CmdVelForwarder : public rclcpp::Node {
     double vy = msg.vy;
     double vyaw = msg.yaw_rate;
     limiter_->Clamp(vx, vy, vyaw);
+    // 地形安全模式：HoldPosition 置零；ReduceSpeed 按比例降速
+    const auto mode = EffectiveTerrainMode();
+    if (mode == motionslam_msgs::msg::TerrainDecision::MODE_HOLD_POSITION) {
+      if (!stopped_) {
+        RCLCPP_WARN(get_logger(), "terrain safety: HoldPosition, 置零");
+        SendMove(0.0, 0.0, 0.0);
+      }
+      return;
+    }
+    if (mode == motionslam_msgs::msg::TerrainDecision::MODE_REDUCE_SPEED) {
+      vx *= reduce_speed_factor_;
+      vy *= reduce_speed_factor_;
+      vyaw *= reduce_speed_factor_;
+    }
     SendMove(vx, vy, vyaw);
+  }
+
+  std::uint8_t EffectiveTerrainMode() const {
+    if (!terrain_safety_enabled_ || !has_terrain_decision_) {
+      return motionslam_msgs::msg::TerrainDecision::MODE_NORMAL;
+    }
+    const auto age_ms = (now() - last_terrain_time_).nanoseconds() / 1000000;
+    if (age_ms > terrain_decision_timeout_ms_) {
+      // 决策超时：fail-safe 保持（LTS 契约：不得静默忽略关键故障）
+      return motionslam_msgs::msg::TerrainDecision::MODE_HOLD_POSITION;
+    }
+    return terrain_mode_;
   }
 
   void OnWatchdog() {
@@ -258,9 +303,16 @@ class CmdVelForwarder : public rclcpp::Node {
   rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr request_pub_;
   rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr sport_pub_;
   rclcpp::Subscription<motionslam_msgs::msg::MotionCommand>::SharedPtr motion_cmd_sub_;
+  rclcpp::Subscription<motionslam_msgs::msg::TerrainDecision>::SharedPtr terrain_sub_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
   rclcpp::TimerBase::SharedPtr init_timer_;
   rclcpp::Time last_cmd_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_terrain_time_{0, 0, RCL_ROS_TIME};
+  std::uint8_t terrain_mode_{0};
+  bool terrain_safety_enabled_{true};
+  bool has_terrain_decision_{false};
+  int64_t terrain_decision_timeout_ms_{1500};
+  double reduce_speed_factor_{0.4};
   int64_t watchdog_timeout_ms_ = 400;
   int64_t request_id_ = 0;
   int init_step_ = 0;

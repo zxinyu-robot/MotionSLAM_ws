@@ -1,0 +1,40 @@
+# MotionSLAM 云端仿真环境（x86_64，无真机依赖）
+# 与 docker/Dockerfile 同构，差异：
+#   - apt 使用默认 x86 源（原文件按 Jetson arm64 ubuntu-ports 清华源配置）
+#   - 不装 Livox-SDK2：云上不跑 Mid-360 驱动 / Super-LIO（用 mock_lio_sim 代替）
+FROM ros:humble
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git wget \
+    libgoogle-glog-dev libtbb-dev \
+    libpcl-dev libeigen3-dev \
+    ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-nav2-msgs \
+    ros-humble-pcl-ros ros-humble-pcl-conversions \
+    ros-humble-foxglove-bridge \
+    ros-humble-rosx-introspection \
+    libasio-dev libwebsocketpp-dev \
+    ros-humble-tf2-tools ros-humble-tf-transformations \
+    ros-humble-rosbag2-storage-mcap \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# unitree_ros2 消息包编译依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-rosidl-generator-dds-idl \
+    libyaml-cpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- DDS 与宇树域 0 原生互通 ----
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV ROS_DOMAIN_ID=0
+
+WORKDIR /ws
+
+RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc \
+    && echo '[ -f /ws/install/setup.bash ] && source /ws/install/setup.bash' >> /root/.bashrc \
+    && echo '[ -f /ws/scan_planner_ws/install/setup.bash ] && source /ws/scan_planner_ws/install/setup.bash' >> /root/.bashrc
+
+CMD ["bash"]

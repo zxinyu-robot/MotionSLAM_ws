@@ -41,6 +41,7 @@ from plan_fail_recovery import (  # noqa: E402
     yaw_delta,
 )
 from return_home import (  # noqa: E402
+    decimate_collinear_xy,
     densify_xy,
     record_breadcrumb,
     reverse_xy_for_scan,
@@ -119,8 +120,6 @@ class ExecPhase(str, Enum):
     EXECUTE = "execute"
     SEARCH = "search"
     RECOVERY_WAIT = "recovery_wait"
-    GLASS_HALT = "glass_halt"
-    GLASS_BACKUP = "glass_backup"
     PLAN_FAIL_HOLD = "plan_fail_hold"
     DRIFT_ICP = "drift_icp"
     ESCAPE = "escape"
@@ -179,7 +178,6 @@ class MissionState:
     recovery_step: int = 0
     recovery_until: float = 0.0
     sidestep_sign: float = 1.0
-    glass_recovery_count: int = 0
     plan_fail_recovery_count: int = 0
     escape_step: int = 0
     escape_start_xy: tuple[float, float] = (0.0, 0.0)
@@ -241,13 +239,7 @@ class DemoScanBtOrchestrator(Node):
         self.declare_parameter("demo_profile", "demo_short")
         self.declare_parameter("recovery_wait_s", 2.5)
         self.declare_parameter("sidestep_m", 0.30)
-        self.declare_parameter("glass_aware_enabled", True)
-        self.declare_parameter("glass_slow_factor", 0.30)
-        self.declare_parameter("glass_halt_wait_s", 1.5)
-        self.declare_parameter("glass_detour_timeout_s", 5.0)
-        self.declare_parameter("glass_max_recovery", 3)
-        self.declare_parameter("glass_backup_m", 0.20)
-        self.declare_parameter("require_stance_on_glass_halt", True)
+        self.declare_parameter("slow_factor", 0.30)
         self.declare_parameter("plan_fail_recovery_enabled", True)
         self.declare_parameter("plan_fail_pause_after", 2)
         self.declare_parameter("max_plan_fail_recovery", 4)
@@ -302,15 +294,7 @@ class DemoScanBtOrchestrator(Node):
         self._demo_profile = str(self.get_parameter("demo_profile").value)
         self._recovery_wait_s = float(self.get_parameter("recovery_wait_s").value)
         self._sidestep_m = float(self.get_parameter("sidestep_m").value)
-        self._glass_enabled = bool(self.get_parameter("glass_aware_enabled").value)
-        self._glass_slow_factor = float(self.get_parameter("glass_slow_factor").value)
-        self._glass_halt_wait = float(self.get_parameter("glass_halt_wait_s").value)
-        self._glass_detour_timeout = float(self.get_parameter("glass_detour_timeout_s").value)
-        self._glass_max_recovery = int(self.get_parameter("glass_max_recovery").value)
-        self._glass_backup_m = float(self.get_parameter("glass_backup_m").value)
-        self._require_stance_glass = bool(
-            self.get_parameter("require_stance_on_glass_halt").value
-        )
+        self._slow_factor = float(self.get_parameter("slow_factor").value)
         self._plan_fail_recovery_enabled = bool(
             self.get_parameter("plan_fail_recovery_enabled").value
         )
@@ -357,12 +341,6 @@ class DemoScanBtOrchestrator(Node):
         self._cloud_ready_since: Optional[float] = None
         self._pgo_state = PgoState.UNKNOWN
         self._last_pgo_state = PgoState.UNKNOWN
-        self._glass_suspect = False
-        self._glass_confirmed = False
-        self._glass_state = "NONE"
-        self._glass_laser_no_return = False
-        self._glass_near_obstacle = False
-        self._stance_ok = True
         self._slow_mode_active = False
         self._vel_defaults = {"scan_max_vel": 0.5, "cl_max_vx": 0.5, "cl_max_vy": 0.35}
         self._drift_estimate_raw: Optional[str] = None
@@ -451,14 +429,6 @@ class DemoScanBtOrchestrator(Node):
         self.create_subscription(String, "/lio/backend/drift_estimate", self._on_drift_estimate, 10)
         self.create_subscription(Bool, "/lio/relocation/converged", self._on_relocation_converged, 10)
         self.create_subscription(Float64, "/lio/relocation/fitness", self._on_relocation_fitness, 10)
-        if self._glass_enabled:
-            self.create_subscription(
-                Bool, "/perception/glass_suspect/flag", self._on_glass_flag, 10
-            )
-            self.create_subscription(
-                String, "/perception/glass_suspect/summary", self._on_glass_summary, 10
-            )
-        self.create_subscription(Bool, "/local_map/stance_ok", self._on_stance_ok, 10)
         self.create_subscription(
             Bool,
             str(self.get_parameter("uplink_ok_topic").value),
@@ -486,30 +456,10 @@ class DemoScanBtOrchestrator(Node):
             f"{len(self._mission.waypoints)} subgoals, "
             f"cloud_gate>={self._cloud_min_msgs}@{self._cloud_window_s}s, "
             f"plan_timeout={self._plan_ready_timeout}s, goal={self._goal_topic}, "
-            f"profile={self._demo_profile}, glass={self._glass_enabled}, "
+            f"profile={self._demo_profile}, "
             f"plan_fail_recovery={self._plan_fail_recovery_enabled}, "
             f"return_home={self._return_home_enabled}"
         )
-
-    def _on_glass_flag(self, msg: Bool) -> None:
-        self._glass_suspect = bool(msg.data)
-
-    def _on_glass_summary(self, msg: String) -> None:
-        try:
-            data = json.loads(msg.data)
-            self._glass_laser_no_return = bool(data.get("laser_no_return"))
-            self._glass_near_obstacle = bool(data.get("near_obstacle"))
-            self._glass_suspect = bool(data.get("glass_suspect", self._glass_suspect))
-            self._glass_confirmed = bool(data.get("glass_confirmed", self._glass_confirmed))
-            self._glass_state = str(data.get("state", self._glass_state))
-        except json.JSONDecodeError:
-            pass
-
-    def _is_glass_solid(self) -> bool:
-        return self._glass_state in ("CONFIRMED", "SOLID") or self._glass_confirmed
-
-    def _on_stance_ok(self, msg: Bool) -> None:
-        self._stance_ok = bool(msg.data)
 
     def _on_drift_estimate(self, msg: String) -> None:
         self._drift_estimate_raw = msg.data
@@ -634,19 +584,10 @@ class DemoScanBtOrchestrator(Node):
         self._enter_plan_fail_hold(reason)
         return True
 
-    def _is_glass_conservative(self) -> bool:
-        if not self._glass_enabled:
-            return False
-        if self._is_glass_solid():
-            return True
-        return self._glass_suspect or (
-            self._glass_laser_no_return and self._glass_near_obstacle
-        )
-
     def _apply_slow_mode(self, enable: bool) -> None:
         if enable == self._slow_mode_active:
             return
-        factor = self._glass_slow_factor if enable else 1.0
+        factor = self._slow_factor if enable else 1.0
         scan_vel = self._vel_defaults["scan_max_vel"] * factor
         cl_vx = self._vel_defaults["cl_max_vx"] * factor
         cl_vy = self._vel_defaults["cl_max_vy"] * factor
@@ -668,40 +609,9 @@ class DemoScanBtOrchestrator(Node):
                 f"SlowApproach {'ON' if enable else 'OFF'} "
                 f"(factor={factor:.2f}, scan_vel={scan_vel:.2f})"
             )
-            self._emit("glass_slow_mode", enabled=enable, factor=round(factor, 3))
+            self._emit("slow_mode", enabled=enable, factor=round(factor, 3))
         except Exception as exc:
             self.get_logger().warn(f"SlowApproach 参数更新失败: {exc}")
-
-    def _dispatch_backup_goal(self) -> None:
-        xy = self._pose_xy()
-        if xy is None or self._odom is None:
-            return
-        q = self._odom.pose.pose.orientation
-        yaw = math.atan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
-        )
-        bx = xy[0] - self._glass_backup_m * math.cos(yaw)
-        by = xy[1] - self._glass_backup_m * math.sin(yaw)
-        bz = max(self._odom.pose.pose.position.z, 0.3)
-        goal = PoseStamped()
-        goal.header.frame_id = "world"
-        goal.header.stamp = self.get_clock().now().to_msg()
-        goal.pose.position.x = bx
-        goal.pose.position.y = by
-        goal.pose.position.z = bz
-        goal.pose.orientation = q
-        self._goal_pub.publish(goal)
-        self._mission.phase = ExecPhase.GLASS_BACKUP
-        self._mission.goal_dispatched_at = time.time()
-        self._mission.last_progress_at = time.time()
-        self.get_logger().warn(f"Glass BackUp {self._glass_backup_m}m → ({bx:.2f}, {by:.2f})")
-        self._emit(
-            "glass_backup",
-            subgoal_index=self._mission.current_index,
-            x=round(bx, 3),
-            y=round(by, 3),
-        )
 
     def _on_pgo_state(self, msg: String) -> None:
         raw = msg.data.strip().upper()
@@ -1075,7 +985,6 @@ class DemoScanBtOrchestrator(Node):
         self._mission.current_index = 0
         self._mission.replan_fail_count = 0
         self._mission.stuck_redispatch_count = 0
-        self._mission.glass_recovery_count = 0
         self._mission.plan_fail_recovery_count = 0
         self._mission.escape_step = 0
         self._pending_emergency_hold = False
@@ -1156,7 +1065,12 @@ class DemoScanBtOrchestrator(Node):
                 raw.append((float(xy[0]), float(xy[1])))
         for ps in msg.poses:
             raw.append((float(ps.pose.position.x), float(ps.pose.position.y)))
-        return self._xy_to_path(densify_xy(raw, step_m=0.20), tag="pct")
+        dense = decimate_collinear_xy(densify_xy(raw, step_m=0.20))
+        if xy is not None:
+            # 丢弃贴近机器人位姿的前导点：否则 SCAN 轨迹首段零长，minSnap 拟合奇异
+            while len(dense) > 1 and math.hypot(dense[0][0] - xy[0], dense[0][1] - xy[1]) < 0.04:
+                dense.pop(0)
+        return self._xy_to_path(dense, tag="pct")
 
     @staticmethod
     def _stamp_ns(stamp: TimeMsg) -> int:
@@ -1201,7 +1115,9 @@ class DemoScanBtOrchestrator(Node):
     ) -> None:
         if self._pct_initial_path_pub is None or len(xy_list) < 2:
             return
-        path = self._xy_to_path(densify_xy(xy_list, step_m=0.20), tag=tag)
+        path = self._xy_to_path(
+            decimate_collinear_xy(densify_xy(xy_list, step_m=0.20)), tag=tag
+        )
         self._pct_ref_path = path
         self._pct_initial_path_pub.publish(path)
 
@@ -1249,7 +1165,6 @@ class DemoScanBtOrchestrator(Node):
         )
         reason = should_return_home(
             explicit=self._return_home_pending == "explicit",
-            glass_trap=self._return_home_pending == "glass_trap",
             link_lost=lost,
             already_returning=self._mission.phase == ExecPhase.RETURN_HOME,
             trail_len=len(self._breadcrumbs),
@@ -1315,12 +1230,10 @@ class DemoScanBtOrchestrator(Node):
                 scan_poses=len(self._pct_ref_path.poses),
             )
 
-    def _dispatch_current_subgoal(self, *, force_glass_detour: bool = False) -> None:
+    def _dispatch_current_subgoal(self) -> None:
         idx = self._mission.current_index
         if idx >= len(self._mission.waypoints):
             return
-        if self._is_glass_conservative():
-            self._apply_slow_mode(True)
         wp = self._mission.waypoints[idx]
         dist = self._dist_to_subgoal(idx)
         if dist is not None and dist > self._max_subgoal_dist:
@@ -1335,8 +1248,6 @@ class DemoScanBtOrchestrator(Node):
         target_x, target_y, target_z = wp.x, wp.y, wp.z
         retry = self._mission.stuck_redispatch_count
         xy = self._pose_xy()
-        if force_glass_detour and xy is not None:
-            self._mission.recovery_step = max(self._mission.recovery_step, 2)
         if (
             retry > 0
             and not self._pct_global_nav_enabled
@@ -1527,37 +1438,6 @@ class DemoScanBtOrchestrator(Node):
             self._dispatch_current_subgoal()
             return
 
-        if self._mission.phase == ExecPhase.GLASS_HALT:
-            if now < self._mission.recovery_until:
-                if self._require_stance_glass and not self._stance_ok:
-                    return
-                return
-            self.get_logger().info("Glass HaltAndWait 结束 → TryDetour")
-            self._mission.glass_recovery_count += 1
-            self._mission.phase = ExecPhase.DISPATCH
-            self._emit(
-                "glass_halt_done",
-                subgoal_index=self._mission.current_index,
-                glass_recovery=self._mission.glass_recovery_count,
-                glass_confirmed=self._glass_confirmed,
-                glass_state=self._glass_state,
-            )
-            self._dispatch_current_subgoal(force_glass_detour=not self._is_glass_solid())
-            return
-
-        if self._mission.phase == ExecPhase.GLASS_BACKUP:
-            if now - self._mission.goal_dispatched_at > 4.0:
-                self._return_home_pending = "glass_trap"
-                if self._start_return_home("glass_trap"):
-                    return
-                self._fail_mission(
-                    "glass_trap",
-                    subgoal_index=self._mission.current_index,
-                    glass_recovery=self._mission.glass_recovery_count,
-                    assist_requested=False,
-                )
-            return
-
         if self._mission.phase == ExecPhase.PLAN_FAIL_HOLD:
             assessment = self._assess_drift_now()
             self._emit("plan_fail_assess", **assessment.to_payload())
@@ -1641,8 +1521,6 @@ class DemoScanBtOrchestrator(Node):
                 dist = self._dist_to_subgoal(self._mission.current_index)
                 self._mission.best_dist_to_subgoal = dist if dist is not None else float("inf")
                 self._mission.initial_dist_to_subgoal = self._mission.best_dist_to_subgoal
-                if self._is_glass_conservative():
-                    self._apply_slow_mode(True)
                 self._emit(
                     "scan_planner_ready",
                     subgoal_index=self._mission.current_index,
@@ -1712,7 +1590,6 @@ class DemoScanBtOrchestrator(Node):
             self._mission.replan_fail_count = 0
             self._mission.stuck_redispatch_count = 0
             self._mission.recovery_step = 0
-            self._mission.glass_recovery_count = 0
             self._mission.best_dist_to_subgoal = float("inf")
             self._apply_slow_mode(False)
             if self._mission.current_index >= len(self._mission.waypoints):
@@ -1739,35 +1616,7 @@ class DemoScanBtOrchestrator(Node):
             self._dispatch_current_subgoal()
             return
 
-        glass_stuck_s = min(self._stuck_timeout, self._glass_detour_timeout)
-        stuck_limit = glass_stuck_s if self._is_glass_conservative() else self._stuck_timeout
-
-        if now - self._mission.last_progress_at > stuck_limit:
-            if (
-                self._is_glass_conservative()
-                and self._mission.recovery_step == 0
-                and self._mission.glass_recovery_count < self._glass_max_recovery
-            ):
-                self._mission.recovery_step = 1
-                self._mission.phase = ExecPhase.GLASS_HALT
-                self._mission.recovery_until = now + self._glass_halt_wait
-                self.get_logger().warn(
-                    f"Glass suspected → HaltAndWait {self._glass_halt_wait}s "
-                    f"(dist={dist:.2f}m)"
-                )
-                self._emit(
-                    "glass_halt",
-                    subgoal_index=self._mission.current_index,
-                    distance_m=round(dist, 2),
-                    glass_state=self._glass_state,
-                )
-                return
-            if (
-                self._is_glass_conservative()
-                and self._mission.glass_recovery_count >= self._glass_max_recovery
-            ):
-                self._dispatch_backup_goal()
-                return
+        if now - self._mission.last_progress_at > self._stuck_timeout:
             if self._mission.recovery_step == 0:
                 self._mission.recovery_step = 1
                 self._mission.phase = ExecPhase.RECOVERY_WAIT

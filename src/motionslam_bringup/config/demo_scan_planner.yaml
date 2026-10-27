@@ -84,13 +84,7 @@ demo_scan_bt_orchestrator:
     autostart_lifecycle: true
     goal_topic: move_base_simple/goal
     waypoints_file: ""
-    glass_aware_enabled: true
-    glass_slow_factor: 0.30
-    glass_halt_wait_s: 1.5
-    glass_detour_timeout_s: 5.0
-    glass_max_recovery: 3
-    glass_backup_m: 0.20
-    require_stance_on_glass_halt: true
+    slow_factor: 0.30
     # PlanFailRecovery: 规划失败停重试 → 判漂移 → ICP/脱困 → 再规划
     plan_fail_recovery_enabled: true
     plan_fail_pause_after: 2

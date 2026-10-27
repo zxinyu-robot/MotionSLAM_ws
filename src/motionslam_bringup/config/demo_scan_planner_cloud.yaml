@@ -1,0 +1,20 @@
+# 云端 vkernel 闭环 overlay：放宽 SCAN 动力学约束，避免 90° 拐角
+# 处 B-spline 动态可行性反复失败（真机 Go2 姿态控制有冗余，虚拟积分器没有）
+scan_planner_node:
+  ros__parameters:
+    # 障碍相对地面高度上限放宽到 3.0m：多楼层仿真里二楼墙体（z≥1.3）
+    # 需要进入占据图（真机保持 1.50，见 云端闭环_vkernel.md 已知限制）
+    grid_map.obstacle_height_max: 3.0
+    manager.max_vel: 0.5
+    manager.max_acc: 2.5
+    manager.max_jerk: 8.0
+    optimization.max_vel: 0.5
+    optimization.max_acc: 2.5
+    optimization.max_jerk: 8.0
+    optimization.acc_tolerance: 1.5
+    optimization.vel_tolerance: 0.3
+closed_loop_controller:
+  ros__parameters:
+    tracking.max_vx: 0.5
+    tracking.max_vy: 0.4
+    tracking.max_yaw_rate: 1.5

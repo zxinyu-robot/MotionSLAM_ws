@@ -35,7 +35,6 @@ class TestReturnHome(unittest.TestCase):
 
     def test_triggers(self) -> None:
         self.assertEqual(should_return_home(explicit=True, trail_len=4), "explicit")
-        self.assertEqual(should_return_home(glass_trap=True, trail_len=4), "glass_trap")
         self.assertEqual(should_return_home(link_lost=True, trail_len=4), "link_lost")
         self.assertIsNone(should_return_home(link_lost=True, trail_len=1))
         self.assertIsNone(

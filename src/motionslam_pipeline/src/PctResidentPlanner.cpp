@@ -129,8 +129,13 @@ class PctResidentPlanner : public rclcpp::Node {
     warmup_period_s_ = declare_parameter("warmup_period_s", 2.0);
     max_grid_ = declare_parameter("max_grid_cells", 220);
 
+    // prior 模式先验图为 transient-local 单次 latch：订阅端必须同为 transient-local 才能补收
+    const bool cloud_latched = declare_parameter("explored_areas_latched", false);
+    const rclcpp::QoS cloud_qos = cloud_latched
+        ? rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local()
+        : rclcpp::SensorDataQoS();
     cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-        "explored_areas", rclcpp::SensorDataQoS(),
+        "explored_areas", cloud_qos,
         std::bind(&PctResidentPlanner::OnCloud, this, std::placeholders::_1));
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "state_estimation", rclcpp::SensorDataQoS(),

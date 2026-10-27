@@ -119,7 +119,7 @@ class DataLayerRegistryNode(Node):
             return
         if event in ("mission_started", "subgoal_dispatched", "subgoal_reached"):
             layer.view_state = ViewState.READY.value
-        elif event in ("plan_fail_hold", "glass_trap", "request_assist"):
+        elif event in ("plan_fail_hold", "request_assist"):
             layer.view_state = ViewState.STALE.value
             layer.last_error = event
 
