@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  task_runtime:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + ctest
+        run: |
+          cmake -S runtime/task_runtime -B build/task_runtime
+          cmake --build build/task_runtime -j
+          ctest --test-dir build/task_runtime --output-on-failure
+
+  bringup_pytest:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: pytest（不依赖 ROS 的用例）
+        run: |
+          pip install pytest pyyaml
+          # test_semantic_mission.py 依赖 rclpy，云端容器内跑；CI 只跑纯 Python 用例
+          python -m pytest src/motionslam_bringup/test \
+            --ignore=src/motionslam_bringup/test/test_semantic_mission.py -q
