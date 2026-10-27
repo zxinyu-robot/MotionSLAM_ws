@@ -119,14 +119,38 @@ bool TaskRuntime::complete_current_skill() {
 }
 
 void TaskRuntime::set_safety_mode(SafetyMode mode) {
-  safety_mode_ = mode;
-  if (mode != SafetyMode::kNormal && active_task_ &&
+  set_safety_source("default", mode);
+}
+
+void TaskRuntime::set_safety_source(const std::string& source,
+                                    SafetyMode mode) {
+  if (mode == SafetyMode::kNormal) {
+    safety_sources_.erase(source);
+  } else {
+    safety_sources_[source] = mode;
+  }
+  SafetyMode effective = SafetyMode::kNormal;
+  for (const auto& [name, m] : safety_sources_) {
+    if (m == SafetyMode::kHold) {
+      effective = SafetyMode::kHold;
+      break;
+    }
+    effective = SafetyMode::kDegraded;
+  }
+  safety_mode_ = effective;
+  if (effective != SafetyMode::kNormal && active_task_ &&
       active_task_->status == TaskStatus::kRunning) {
     active_task_->status = TaskStatus::kHolding;
-    const auto reason = mode == SafetyMode::kHold ? "safety_hold"
-                                                  : "degraded_not_validated";
+    const auto reason = effective == SafetyMode::kHold
+                            ? "safety_hold"
+                            : "degraded_not_validated";
     emit(RuntimeEventType::kSafetyHold, {}, reason);
   }
+}
+
+SafetyMode TaskRuntime::safety_source(const std::string& source) const {
+  const auto it = safety_sources_.find(source);
+  return it == safety_sources_.end() ? SafetyMode::kNormal : it->second;
 }
 
 void TaskRuntime::emit(RuntimeEventType type, std::string skill,
