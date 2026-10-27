@@ -16,10 +16,10 @@ from __future__ import annotations
 import json
 import socket
 import socketserver
-
-import yaml
 import threading
 from typing import Any, Optional
+
+import yaml
 
 import rclpy
 from rclpy.node import Node
@@ -86,6 +86,8 @@ class ThinHarnessNode(Node):
         self._admission = TaskAdmission()
         self._pending_intent: Optional[TaskIntent] = None
         self._preempt_timer: Optional[threading.Timer] = None
+        # 超时接力后旧任务迟到的 mission_canceled 不能落到新任务上
+        self._swallow_cancel_ack = False
 
         self._goal_pub = self.create_publisher(
             PoseStamped, str(self.get_parameter("semantic_goal_topic").value), 10
@@ -207,11 +209,14 @@ class ThinHarnessNode(Node):
             preempted = active.task_id  # type: ignore[union-attr]
             self._cancel_task("preempted")
             self._finish(TaskState.CANCELED, f"preempted_by:{intent.task_id}")
-            self._preempt_timer = threading.Timer(
+            timer = threading.Timer(
                 self._preempt_timeout, self._start_pending, args=("preempt_timeout",)
             )
-            self._preempt_timer.daemon = True
-            self._preempt_timer.start()
+            timer.daemon = True
+            with self._lock:
+                if self._pending_intent is intent:
+                    self._preempt_timer = timer
+                    timer.start()
             return {"type": "task_accepted", "task_id": intent.task_id, "preempted": preempted}
         self._start_intent(intent)
         return {"type": "task_accepted", "task_id": intent.task_id}
@@ -229,6 +234,8 @@ class ThinHarnessNode(Node):
         with self._lock:
             intent, self._pending_intent = self._pending_intent, None
             timer, self._preempt_timer = self._preempt_timer, None
+            if intent is not None and reason == "preempt_timeout":
+                self._swallow_cancel_ack = True
         if timer is not None:
             timer.cancel()
         if intent is None:
@@ -302,9 +309,16 @@ class ThinHarnessNode(Node):
         except json.JSONDecodeError:
             return
         event = str(body.get("event", ""))
-        if event == "mission_canceled" and self._pending_intent is not None:
-            self._start_pending("mission_canceled")
-            return
+        if event == "mission_canceled":
+            with self._lock:
+                handoff = self._pending_intent is not None
+                stale_ack = not handoff and self._swallow_cancel_ack
+                self._swallow_cancel_ack = False
+            if handoff:
+                self._start_pending("mission_canceled")
+                return
+            if stale_ack:
+                return
         with self._lock:
             if self._state != TaskState.RUNNING or self._intent is None:
                 return
