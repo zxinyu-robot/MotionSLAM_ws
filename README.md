@@ -105,7 +105,7 @@ cp MID360_config.example.json MID360_config.json
 以下是同一体系的独立仓库，不是本仓库的子模块，按需集成。
 
 **同体系的其他平台**
-- [legged-navigation-runtime](https://github.com/zxinyu-robot/legged-navigation-runtime) — Unitree G1/H2 双足端侧自主导航闭环（脱敏重构）；其 `RecoveryPlugin` 已通过 `runtime/task_runtime` 的恢复桥接入本仓库
+- [legged-navigation-runtime](https://github.com/zxinyu-robot/legged-navigation-runtime) — Unitree G1/H2 双足端侧自主导航闭环（脱敏重构）；其 `RecoveryPlugin` 已通过 `runtime/task_runtime` 的恢复桥接入本仓库（仅在 C++ 故障演练测试中接通，尚未接入 ROS 主链）
 - [CleanRobot-Sim2Real-skill](https://github.com/zxinyu-robot/CleanRobot-Sim2Real-skill) — 复合清洁机器人（移动底盘 + xArm）的操作技能学习与评测（MuJoCo 仿真）
 
 **空间运行时与通信**
