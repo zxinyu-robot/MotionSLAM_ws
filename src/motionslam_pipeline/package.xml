@@ -25,7 +25,6 @@
   <depend>libpcl-all-dev</depend>
   <depend>yaml-cpp</depend>
   <depend>openssl</depend>
-  <depend>motionslam_ipc</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 
